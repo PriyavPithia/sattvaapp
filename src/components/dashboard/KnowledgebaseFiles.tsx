@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { knowledgebaseService } from '@/lib/knowledgebaseService';
 import { toast } from 'sonner';
-import { FileText, Search, Trash, ArrowLeft, Upload, Code, Edit } from 'lucide-react';
+import { FileText, Search, Trash, ArrowLeft, Upload, Code, Edit, ChevronLeft, RefreshCw } from 'lucide-react';
 import { formatFileSize } from '@/lib/utils';
 import { FileContentViewer } from './FileContentViewer';
 import type { FileRecord } from '@/lib/supabase';
@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Loader2 } from 'lucide-react';
 
 interface KnowledgebaseFilesProps {
   knowledgebaseId: string;
@@ -37,12 +38,12 @@ interface KnowledgebaseFilesProps {
   onAddFiles: () => void;
 }
 
-export function KnowledgebaseFiles({ 
+export const KnowledgebaseFiles = forwardRef<{ refreshFiles: () => Promise<void> }, KnowledgebaseFilesProps>(({ 
   knowledgebaseId, 
   knowledgebaseTitle, 
   onBack,
   onAddFiles
-}: KnowledgebaseFilesProps) {
+}, ref) => {
   const [files, setFiles] = useState<FileRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
@@ -56,10 +57,7 @@ export function KnowledgebaseFiles({
   const [newFileName, setNewFileName] = useState('');
   const { toast } = useToast();
 
-  useEffect(() => {
-    fetchFiles();
-  }, [knowledgebaseId]);
-
+  // Define fetchFiles function first
   const fetchFiles = async () => {
     try {
       setIsLoading(true);
@@ -85,6 +83,27 @@ export function KnowledgebaseFiles({
       setIsLoading(false);
     }
   };
+
+  // Create a ref to expose the fetchFiles function
+  const refreshFilesRef = useRef<() => Promise<void>>(fetchFiles);
+
+  // Update the ref when the component mounts or knowledgebaseId changes
+  useEffect(() => {
+    refreshFilesRef.current = fetchFiles;
+  }, [knowledgebaseId]);
+
+  // Expose the fetchFiles function to parent components via the ref
+  useImperativeHandle(
+    ref,
+    () => ({
+      refreshFiles: fetchFiles
+    }),
+    [knowledgebaseId]
+  );
+
+  useEffect(() => {
+    fetchFiles();
+  }, [knowledgebaseId]);
 
   const confirmDeleteFile = (fileId: string) => {
     setFileToDelete(fileId);
@@ -240,18 +259,43 @@ export function KnowledgebaseFiles({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-2">
-          <Button variant="outline" size="icon" onClick={onBack}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h2 className="text-xl font-semibold">{knowledgebaseTitle} - Files</h2>
-        </div>
-        <div className="flex space-x-2">
+        <div className="flex items-center">
           <Button 
-            className="bg-sattva-600 hover:bg-sattva-700"
+            variant="outline" 
+            size="sm" 
+            onClick={onBack}
+            className="mr-2"
+          >
+            <ChevronLeft className="h-4 w-4 mr-1" />
+            Back
+          </Button>
+          <h2 className="text-xl font-semibold">{knowledgebaseTitle}</h2>
+        </div>
+        <div className="flex gap-2">
+          <Button 
+            variant="outline" 
+            size="sm"
+            onClick={() => fetchFiles()}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <>
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                Refreshing...
+              </>
+            ) : (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Refresh
+              </>
+            )}
+          </Button>
+          <Button 
+            size="sm"
             onClick={onAddFiles}
+            className="bg-sattva-600 hover:bg-sattva-700"
           >
             <Upload className="h-4 w-4 mr-2" />
             Add Files
@@ -311,8 +355,9 @@ export function KnowledgebaseFiles({
       )}
 
       {isLoading ? (
-        <div className="flex justify-center items-center h-64">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sattva-600"></div>
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="h-8 w-8 animate-spin text-sattva-600" />
+          <span className="ml-2 text-lg">Loading files...</span>
         </div>
       ) : files.length === 0 ? (
         <Card>
@@ -355,20 +400,10 @@ export function KnowledgebaseFiles({
                           </Button>
                           <span className="mr-2">{formatFileSize(file.size)}</span>
                           {file.content_length && (
-                            <span className="mr-2">
+                            <span>
                               Content: {formatFileSize(file.content_length)}
                             </span>
                           )}
-                          {file.extraction_status && (
-                            <Badge 
-                              variant={file.extraction_status === 'completed' ? 'default' : 
-                                      file.extraction_status === 'pending' ? 'outline' : 'destructive'}
-                              className="mr-2"
-                            >
-                              {file.extraction_status}
-                            </Badge>
-                          )}
-                          <span>{formatDate(file.created_at)}</span>
                         </div>
                       </div>
                     </div>
@@ -474,4 +509,4 @@ export function KnowledgebaseFiles({
       </Dialog>
     </div>
   );
-} 
+}); 

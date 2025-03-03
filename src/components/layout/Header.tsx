@@ -103,13 +103,7 @@ export function Header({ title, subtitle, showActions = true }: HeaderProps) {
           
           {showActions && (
             <div className="flex items-center space-x-2">
-              <Button className="bg-sattva-600 hover:bg-sattva-700 text-white">
-                <span className="mr-1">Ask AI</span>
-              </Button>
-              
-              <Button variant="outline">
-                <span className="mr-1">Create workspace</span>
-              </Button>
+              {/* Removed "Ask AI" and "Create workspace" buttons */}
             </div>
           )}
         </div>

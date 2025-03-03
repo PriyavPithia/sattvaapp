@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,7 +15,6 @@ import {
   Trash,
   Edit,
   Search,
-  Share,
 } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -30,31 +29,17 @@ import { useAuth } from '@/lib/AuthContext';
 import { knowledgebaseService } from '@/lib/knowledgebaseService';
 import { chatService } from '@/lib/chatService';
 import { Knowledgebase } from '@/lib/supabase';
-
-// Sample data for recent uploads
-const recentUploads = [
-  {
-    id: 1,
-    name: 'Quarterly Presentation.pptx',
-    size: '2.4 MB',
-    type: 'pptx',
-    uploadedAt: '2 hours ago'
-  },
-  {
-    id: 2,
-    name: 'Marketing Strategy.pdf',
-    size: '3.8 MB',
-    type: 'pdf',
-    uploadedAt: '1 day ago'
-  },
-  {
-    id: 3,
-    name: 'Team Meeting Recording.mp4',
-    size: '145 MB',
-    type: 'video',
-    uploadedAt: '2 days ago'
-  }
-];
+import { EditKnowledgeBaseModal } from '@/components/dashboard/EditKnowledgeBaseModal';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -69,6 +54,11 @@ const Dashboard = () => {
   const [fileCounts, setFileCounts] = useState<Record<string, number>>({});
   const [totalFileCount, setTotalFileCount] = useState<number>(0);
   const [aiInteractionsCount, setAiInteractionsCount] = useState<number>(0);
+  const knowledgebaseFilesRef = useRef<{ refreshFiles: () => Promise<void> }>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [selectedKnowledgeBaseForEdit, setSelectedKnowledgeBaseForEdit] = useState<Knowledgebase | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [knowledgeBaseToDelete, setKnowledgeBaseToDelete] = useState<string | null>(null);
   
   // Fetch knowledgebases on component mount
   useEffect(() => {
@@ -147,43 +137,59 @@ const Dashboard = () => {
     navigate(`/chat?kb=${kbId}`);
   };
 
-  const handleDeleteKnowledgeBase = async (kbId: string) => {
+  const confirmDeleteKnowledgeBase = (kbId: string) => {
+    setKnowledgeBaseToDelete(kbId);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const handleDeleteKnowledgeBase = async () => {
+    if (!knowledgeBaseToDelete) return;
+    
     try {
-      await knowledgebaseService.deleteKnowledgebase(kbId);
-      setKnowledgeBases(knowledgeBases.filter(kb => kb.id !== kbId));
+      await knowledgebaseService.deleteKnowledgebase(knowledgeBaseToDelete);
+      setKnowledgeBases(knowledgeBases.filter(kb => kb.id !== knowledgeBaseToDelete));
       toast.success('Knowledge base deleted successfully');
     } catch (error) {
       console.error('Error deleting knowledge base:', error);
       toast.error('Failed to delete knowledge base');
+    } finally {
+      setKnowledgeBaseToDelete(null);
+      setIsDeleteDialogOpen(false);
     }
   };
 
   const handleEditKnowledgeBase = (kbId: string) => {
-    toast.info('Edit functionality coming soon!');
+    const knowledgeBase = knowledgeBases.find(kb => kb.id === kbId);
+    if (knowledgeBase) {
+      setSelectedKnowledgeBaseForEdit(knowledgeBase);
+      setIsEditModalOpen(true);
+    } else {
+      toast.error('Knowledge base not found');
+    }
   };
 
-  const handleShareKnowledgeBase = (kbId: string) => {
-    toast.info('Share functionality coming soon!');
+  const handleUpdateKnowledgeBase = async (id: string, title: string, description: string) => {
+    try {
+      const updatedKb = await knowledgebaseService.updateKnowledgebase(id, title, description);
+      
+      // Update the knowledge base in the state
+      setKnowledgeBases(prevKbs => 
+        prevKbs.map(kb => kb.id === id ? updatedKb : kb)
+      );
+      
+      toast.success('Knowledge base updated successfully');
+    } catch (error) {
+      console.error('Error updating knowledge base:', error);
+      toast.error('Failed to update knowledge base');
+    }
   };
 
   const handleAddNewTask = () => {
     toast.info('Task creation functionality coming soon!');
   };
 
-  const handleUploadNewFiles = () => {
-    toast.info('Please select a knowledge base to add files to.');
-  };
-
-  const handleViewFileDetails = (fileId: number) => {
-    toast.info('File details view coming soon!');
-  };
-
-  const handleDownloadFile = (fileId: number) => {
-    toast.info('File download functionality coming soon!');
-  };
-
-  const handleDeleteFile = (fileId: number) => {
-    toast.success('File deleted successfully');
+  const handleCreateTask = () => {
+    toast.info('Task creation functionality coming soon!');
   };
 
   // Format date string from ISO to relative time
@@ -256,6 +262,7 @@ const Dashboard = () => {
           
           {viewingFiles && selectedKnowledgeBase ? (
             <KnowledgebaseFiles 
+              ref={knowledgebaseFilesRef}
               knowledgebaseId={selectedKnowledgeBase.id}
               knowledgebaseTitle={selectedKnowledgeBase.title}
               onBack={handleBackToKnowledgeBases}
@@ -348,16 +355,7 @@ const Dashboard = () => {
                                 <DropdownMenuItem 
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleShareKnowledgeBase(kb.id);
-                                  }}
-                                >
-                                  <Share className="h-4 w-4 mr-2" />
-                                  Share
-                                </DropdownMenuItem>
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleDeleteKnowledgeBase(kb.id);
+                                    confirmDeleteKnowledgeBase(kb.id);
                                   }}
                                   className="text-red-600 hover:text-red-700 hover:bg-red-50"
                                 >
@@ -409,77 +407,6 @@ const Dashboard = () => {
                   </div>
                 )}
               </div>
-              
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold">Recent Uploads</h2>
-                  <Button variant="outline" onClick={handleUploadNewFiles}>
-                    <Upload className="h-4 w-4 mr-2" />
-                    Upload Files
-                  </Button>
-                </div>
-                
-                <Card>
-                  <div className="divide-y">
-                    {recentUploads.map((file) => (
-                      <div key={file.id} className="p-4 hover:bg-gray-50 transition-colors">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center">
-                            <div className="w-10 h-10 rounded bg-gray-100 flex items-center justify-center mr-3">
-                              <FileText className="h-5 w-5 text-gray-500" />
-                            </div>
-                            <div>
-                              <h4 className="font-medium">{file.name}</h4>
-                              <div className="flex items-center text-xs text-gray-500">
-                                <span className="mr-2">{file.size}</span>
-                                <span>{file.uploadedAt}</span>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button 
-                              variant="ghost" 
-                              size="icon"
-                              onClick={() => handleViewFileDetails(file.id)}
-                            >
-                              <Search className="h-4 w-4" />
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon"
-                              onClick={() => handleDownloadFile(file.id)}
-                            >
-                              <svg 
-                                xmlns="http://www.w3.org/2000/svg" 
-                                width="16" 
-                                height="16" 
-                                viewBox="0 0 24 24" 
-                                fill="none" 
-                                stroke="currentColor" 
-                                strokeWidth="2" 
-                                strokeLinecap="round" 
-                                strokeLinejoin="round"
-                              >
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                <polyline points="7 10 12 15 17 10" />
-                                <line x1="12" y1="15" x2="12" y2="3" />
-                              </svg>
-                            </Button>
-                            <Button 
-                              variant="ghost" 
-                              size="icon"
-                              onClick={() => handleDeleteFile(file.id)}
-                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                            >
-                              <Trash className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              </div>
             </>
           )}
         </main>
@@ -508,9 +435,44 @@ const Dashboard = () => {
                 .then(counts => setFileCounts(counts))
                 .catch(err => console.error('Error refreshing file counts:', err));
             }
+            
+            // Refresh files list if viewing files
+            if (viewingFiles && knowledgebaseFilesRef.current) {
+              knowledgebaseFilesRef.current.refreshFiles();
+            }
           }}
         />
       )}
+      
+      {isEditModalOpen && selectedKnowledgeBaseForEdit && (
+        <EditKnowledgeBaseModal
+          isOpen={isEditModalOpen}
+          onClose={() => setIsEditModalOpen(false)}
+          onSubmit={handleUpdateKnowledgeBase}
+          knowledgeBase={selectedKnowledgeBaseForEdit}
+        />
+      )}
+      
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you sure you want to delete this knowledge base?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently remove the knowledge base and all its files.
+              This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setKnowledgeBaseToDelete(null)}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleDeleteKnowledgeBase}
+              className="bg-red-500 hover:bg-red-600 text-white"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

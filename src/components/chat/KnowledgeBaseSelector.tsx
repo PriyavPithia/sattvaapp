@@ -19,7 +19,10 @@ type KnowledgeBaseSelectorProps = {
   initialKnowledgeBaseId?: string;
 };
 
-export function KnowledgeBaseSelector({ onSelect, initialKnowledgeBaseId }: KnowledgeBaseSelectorProps) {
+export function KnowledgeBaseSelector({ 
+  onSelect, 
+  initialKnowledgeBaseId
+}: KnowledgeBaseSelectorProps) {
   const { user } = useAuth();
   const [knowledgebases, setKnowledgebases] = useState<Knowledgebase[]>([]);
   const [selectedKB, setSelectedKB] = useState<Knowledgebase | null>(null);

@@ -164,12 +164,21 @@ const Index = () => {
           </p>
           
           <div className="flex flex-col sm:flex-row justify-center gap-4 animate-slide-in-bottom" style={{ animationDelay: '0.3s' }}>
-            <Link to="/auth?mode=signup">
-              <Button className="bg-sattva-600 hover:bg-sattva-700 text-white px-8 py-6 text-lg">
-                Get Started
-                <ArrowRight className="ml-2 h-5 w-5" />
-              </Button>
-            </Link>
+            {user ? (
+              <Link to="/dashboard">
+                <Button className="bg-sattva-600 hover:bg-sattva-700 text-white px-8 py-6 text-lg">
+                  Go To Dashboard
+                  <ArrowRight className="ml-2 h-5 w-5" />
+                </Button>
+              </Link>
+            ) : (
+              <Link to="/auth?mode=signup">
+                <Button className="bg-sattva-600 hover:bg-sattva-700 text-white px-8 py-6 text-lg">
+                  Get Started
+                  <ArrowRight className="ml-2 h-5 w-5" />
+                </Button>
+              </Link>
+            )}
             <a href="#features">
               <Button variant="outline" className="px-8 py-6 text-lg">
                 See how it works

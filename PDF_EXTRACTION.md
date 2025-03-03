@@ -185,4 +185,4 @@ For a production environment, consider these advanced features:
 
 ## Implementation in Sattva AI
 
-In Sattva AI, we've implemented a modular approach to text extraction in `src/lib/textExtraction.ts`, which handles different file types including PDFs. This is integrated with the file upload component to seamlessly extract text when users upload files.
+In Sattva AI, we've implemented a modular approach to text extraction in `src/lib/textExtraction.ts`, which handles different file types including PDFs. This is integrated with the file upload component to seamlessly extract text when users upload files. 

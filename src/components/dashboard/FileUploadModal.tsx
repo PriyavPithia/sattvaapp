@@ -388,7 +388,7 @@ export function FileUploadModal({
       });
       return;
     }
-    
+
     setIsUploading(true);
     
     try {
@@ -777,7 +777,7 @@ export function FileUploadModal({
                   className="border-none shadow-none"
                   onProcessingChange={setIsVideoProcessing}
                 />
-              </TabsContent>
+          </TabsContent>
           
           <TabsContent value="record" className="mt-0">
                 <SpeechToText 

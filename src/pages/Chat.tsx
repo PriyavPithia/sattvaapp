@@ -3,7 +3,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { SendHorizonal, Plus, Bot, Upload, Clock, FileText, ExternalLink, Youtube, Play, Trash2, BookOpen, Copy, Save } from 'lucide-react';
+import { SendHorizonal, Plus, Bot, Upload, Clock, FileText, ExternalLink, Youtube, Play, Trash2, BookOpen } from 'lucide-react';
 import { KnowledgeBaseSelector } from '@/components/chat/KnowledgeBaseSelector';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -31,19 +31,8 @@ import {
 import { aiService } from '@/lib/aiService';
 import { useAuth } from '@/lib/AuthContext';
 import { chatService } from '@/lib/chatService';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { parseReferences } from '../lib/aiService';
-import ReferenceLink from '../components/ReferenceLink';
-import remarkGfm from 'remark-gfm';
-import React from 'react';
+import { supabase } from '@/lib/supabase';
 
 type Message = {
   id: string;
@@ -54,9 +43,52 @@ type Message = {
     fileId: string;
     text: string;
     position?: number;
-    type?: string;
-    sourceId?: string;
   }[];
+};
+
+// Custom component for rendering inline references
+type ReferenceButtonProps = {
+  reference: {
+    fileId: string;
+    text: string;
+    position?: number;
+  };
+  knowledgebaseFiles: FileRecord[];
+  onReferenceClick: (reference: { fileId: string; position?: number }) => void;
+  getFileTypeLabel: (type: string) => string;
+};
+
+const ReferenceButton = ({ reference, knowledgebaseFiles, onReferenceClick, getFileTypeLabel }: ReferenceButtonProps) => {
+  const file = knowledgebaseFiles.find(f => f.id === reference.fileId);
+  const fileType = file ? file.type.toLowerCase() : 'unknown';
+  
+  let icon = <FileText className="h-3 w-3 mr-1" />;
+  let label = getFileTypeLabel(fileType);
+  
+  if (fileType === 'youtube') {
+    icon = <Youtube className="h-3 w-3 mr-1" />;
+    label = reference.position ? formatTime(reference.position) : 'YouTube';
+  } else if (fileType === 'pdf') {
+    icon = <FileText className="h-3 w-3 mr-1" />;
+    label = 'PDF';
+  } else if (fileType === 'audio') {
+    icon = <Play className="h-3 w-3 mr-1" />;
+    label = reference.position ? formatTime(reference.position) : 'Audio';
+  } else if (fileType === 'video') {
+    icon = <Play className="h-3 w-3 mr-1" />;
+    label = reference.position ? formatTime(reference.position) : 'Video';
+  }
+  
+  return (
+    <button
+      onClick={() => onReferenceClick(reference)}
+      className="inline-flex items-center px-2 py-0.5 rounded bg-sattva-50 border border-sattva-200 hover:bg-sattva-100 text-xs mx-1 align-middle text-sattva-700 transition-colors"
+      title={`View reference in ${file?.name || 'source'}`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
 };
 
 const Chat = () => {
@@ -82,9 +114,6 @@ const Chat = () => {
   const [currentChat, setCurrentChat] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
-  const [studyNotes, setStudyNotes] = useState<string>('');
-  const [showNotesDialog, setShowNotesDialog] = useState(false);
-  const transcriptContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // If a knowledge base is selected, create or load a chat
@@ -118,7 +147,7 @@ const Chat = () => {
               setMessages([
                 {
                   id: 'welcome',
-                  content: `Hello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+                  content: `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
                   isUser: false,
                   timestamp: new Date()
                 }
@@ -138,7 +167,7 @@ const Chat = () => {
             setMessages([
               {
                 id: 'welcome',
-                content: `Hello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+                content: `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
                 isUser: false,
                 timestamp: new Date()
               }
@@ -147,7 +176,7 @@ const Chat = () => {
             // Save the welcome message
             await chatService.addMessage(
               newChat.id,
-              `Hello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+              `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
               false
             );
           }
@@ -182,194 +211,86 @@ const Chat = () => {
       return;
     }
     if (!currentChat) {
-      toast.error('Chat is not initialized yet');
+      toast.error('Chat not initialized properly');
       return;
     }
+
+    // Add user message
+    const userMessageId = `user-${Date.now()}`;
+    const userMessage: Message = {
+      id: userMessageId,
+      content: inputMessage,
+      isUser: true,
+      timestamp: new Date()
+    };
     
+    setMessages(prevMessages => [...prevMessages, userMessage]);
+    setInputMessage('');
     setIsProcessing(true);
     
     try {
-      // Create user message
-      const userMessage: Message = {
-        id: `user-${Date.now()}`,
-        content: inputMessage,
-        isUser: true,
-        timestamp: new Date(),
-        references: []
-      };
-      
       // Save user message to database
       await chatService.addMessage(currentChat, inputMessage, true);
       
-      // Update UI with user message
-      setMessages(prevMessages => [...prevMessages, userMessage]);
-      setInputMessage('');
-      
-      // Query AI with user message
+      // Query the AI with the user's message
       const aiResponse = await aiService.queryKnowledgebase(selectedKnowledgeBase.id, inputMessage);
       
-      // Create context array for reference parsing
-      const context = knowledgebaseFiles.map(file => ({
-        fileId: file.id,
-        content: file.content_text || "",
-        fileType: file.type.toLowerCase(),
-        sourceId: file.metadata?.videoId // For YouTube videos
-      }));
-      
-      // Check for inline references in the content
-      const newReferenceRegex = /{{ref:([a-zA-Z0-9-]+):([a-zA-Z0-9-_]+):(\d+)}}/g;
-      const legacyReferenceRegex = /{{([a-zA-Z0-9-]+):(\d+)}}/g;
-      const uuidRegex = /{{([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})}}/gi;
-      const specificUuidRegex = /{{011ebcba-34bf-415f-be8f-740ee79b5cc0}}/g;
-      const specificRefUuidRegex = /{{ref:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})}}/g;
-      const youtubeRefUuidRegex = /{{ref:youtube:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})}}/g;
-      const videoTranscriptionRegex = /{{ref:video\/transcription:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):(\d+)}}/g;
-      
-      // Process the content to handle any problematic references
-      let processedContent = aiResponse.text;
-      
-      // Replace video/transcription references if found
-      if (videoTranscriptionRegex.test(processedContent)) {
-        console.warn('Found video/transcription references in AI response. Converting to proper format.');
-        
-        // Reset regex lastIndex
-        videoTranscriptionRegex.lastIndex = 0;
-        
-        if (knowledgebaseFiles.length > 0) {
-          // Find video files first
-          const videoFiles = knowledgebaseFiles.filter(file => 
-            file.type.toLowerCase() === 'video' || 
-            file.type.toLowerCase() === 'youtube'
-          );
-          
-          if (videoFiles.length > 0) {
-            // Use the first video file for replacements
-            const videoFile = videoFiles[0];
-            const fileType = videoFile.type.toLowerCase();
-            
-            // Replace video/transcription references with proper format
-            processedContent = processedContent.replace(
-              videoTranscriptionRegex,
-              (match, uuid, pos) => {
-                // Try to find the exact file with this UUID
-                const exactFile = knowledgebaseFiles.find(f => f.id === uuid);
-                if (exactFile) {
-                  // Check if it's a YouTube video by looking at the metadata
-                  if (exactFile.type.toLowerCase() === 'youtube' || 
-                      (exactFile.metadata && exactFile.metadata.videoId)) {
-                    // It's a YouTube video, use the YouTube format
-                    const videoId = exactFile.metadata?.videoId || exactFile.id;
-                    return `{{ref:youtube:${videoId}:${pos}}}`;
-                  }
-                  // Otherwise use the file's actual type
-                  return `{{ref:${exactFile.type.toLowerCase()}:${exactFile.id}:${pos}}}`;
-                }
-                
-                // If not found, use the first video file
-                // Check if it's a YouTube video
-                if (fileType === 'youtube' && videoFile.metadata?.videoId) {
-                  return `{{ref:youtube:${videoFile.metadata.videoId}:${pos}}}`;
-                }
-                return `{{ref:${fileType}:${videoFile.id}:${pos}}}`;
-              }
-            );
-          }
-        }
-      }
-      
-      // Replace UUID references if found
-      if (uuidRegex.test(processedContent) || 
-          specificUuidRegex.test(processedContent) || 
-          specificRefUuidRegex.test(processedContent) ||
-          youtubeRefUuidRegex.test(processedContent)) {
-        console.warn('Found UUID references in AI response. Replacing with proper references.');
-        
-        // Reset regex lastIndex
-        uuidRegex.lastIndex = 0;
-        specificRefUuidRegex.lastIndex = 0;
-        youtubeRefUuidRegex.lastIndex = 0;
-        
-        if (knowledgebaseFiles.length > 0) {
-          // Find YouTube files first
-          const youtubeFiles = knowledgebaseFiles.filter(file => 
-            file.type.toLowerCase() === 'youtube' && file.metadata?.videoId
-          );
-          
-          if (youtubeFiles.length > 0) {
-            // Use the first YouTube file for replacements
-            const youtubeFile = youtubeFiles[0];
-            const videoId = youtubeFile.metadata?.videoId || 'videoId';
-            const position = 120; // Default position in seconds
-            
-            // Replace YouTube specific UUID references with proper format
-            processedContent = processedContent.replace(
-              youtubeRefUuidRegex, 
-              `{{ref:youtube:${videoId}:${position}}}`
-            );
-            
-            // Also replace other UUID formats with YouTube reference if they exist
-            processedContent = processedContent.replace(specificUuidRegex, `{{ref:youtube:${videoId}:${position}}}`);
-            processedContent = processedContent.replace(specificRefUuidRegex, `{{ref:youtube:${videoId}:${position}}}`);
-          } else {
-            // No YouTube files, use the first file of any type
-            const firstFile = knowledgebaseFiles[0];
-            const fileType = firstFile.type.toLowerCase();
-            
-            // Replace legacy format UUIDs
-            processedContent = processedContent.replace(uuidRegex, `{{ref:${fileType}:${firstFile.id}:0}}`);
-            processedContent = processedContent.replace(specificUuidRegex, `{{ref:${fileType}:${firstFile.id}:0}}`);
-            
-            // Replace new format UUIDs with specific reference
-            processedContent = processedContent.replace(
-              specificRefUuidRegex, 
-              `{{ref:${fileType}:${firstFile.id}:0}}`
-            );
-            
-            // Replace YouTube specific UUID references
-            processedContent = processedContent.replace(
-              youtubeRefUuidRegex, 
-              `{{ref:${fileType}:${firstFile.id}:0}}`
-            );
-          }
-        }
-      }
-      
-      // Parse references from the processed content
-      const parsedReferences = parseReferences(processedContent, context);
-      
-      // Create AI message with processed content
+      // Create AI message
+      const aiMessageId = `ai-${Date.now()}`;
       const aiMessage: Message = {
-        id: `ai-${Date.now()}`,
-        content: processedContent,
+        id: aiMessageId,
+        content: aiResponse.text,
         isUser: false,
         timestamp: new Date(),
-        references: parsedReferences.length > 0 ? parsedReferences : aiResponse.references
+        references: aiResponse.references
       };
       
-      // Save AI message to database with processed content
-      await chatService.addMessage(
-        currentChat, 
-        processedContent, 
-        false, 
-        aiMessage.references
-      );
-      
-      // Update UI with AI message
+      // Add AI message to state
       setMessages(prevMessages => [...prevMessages, aiMessage]);
       
+      // Save AI message to database
+      await chatService.addMessage(
+        currentChat, 
+        aiResponse.text, 
+        false, 
+        aiResponse.references
+      );
+      
       // If there's a reference, select that file
-      if (aiMessage.references && aiMessage.references.length > 0) {
-        const firstReference = aiMessage.references[0];
+      if (aiResponse.references && aiResponse.references.length > 0) {
+        const firstReference = aiResponse.references[0];
         const referencedFile = knowledgebaseFiles.find(file => file.id === firstReference.fileId);
         
         if (referencedFile) {
           setSelectedFile(referencedFile);
           setActiveTab('transcripts');
+          
+          // If it's a YouTube video, set the current time
+          if (referencedFile.type.toLowerCase() === 'youtube' && firstReference.position) {
+            setCurrentTime(firstReference.position);
+          }
         }
       }
     } catch (error) {
-      console.error('Error sending message:', error);
-      toast.error(`Error: ${error.message || 'Failed to send message'}`);
+      console.error('Error getting AI response:', error);
+      toast.error('Failed to get AI response');
+      
+      // Add error message
+      const errorMessage: Message = {
+        id: `error-${Date.now()}`,
+        content: "# Error Processing Request\n\nI'm sorry, I encountered an error while processing your request. Please try again later.",
+        isUser: false,
+        timestamp: new Date()
+      };
+      
+      setMessages(prevMessages => [...prevMessages, errorMessage]);
+      
+      // Save error message to database
+      await chatService.addMessage(
+        currentChat,
+        "# Error Processing Request\n\nI'm sorry, I encountered an error while processing your request. Please try again later.",
+        false
+      );
     } finally {
       setIsProcessing(false);
     }
@@ -390,19 +311,41 @@ const Chat = () => {
     setSelectedFile(null);
   };
 
-  const handleClearChat = () => {
-    setMessages([]);
-    if (selectedKnowledgeBase) {
+  const handleClearChat = async () => {
+    if (!selectedKnowledgeBase || !currentChat) {
+      toast.error('Knowledge base or chat not selected');
+      return;
+    }
+
+    try {
+      // Delete all messages from the database for this chat
+      const { data: messages } = await supabase
+        .from('messages')
+        .delete()
+        .eq('chat_id', currentChat);
+      
+      // Reset the messages in the UI
       setMessages([
         {
           id: 'welcome',
-          content: `Hello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+          content: `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
           isUser: false,
           timestamp: new Date()
         }
       ]);
+      
+      // Add the welcome message to the database
+      await chatService.addMessage(
+        currentChat,
+        `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+        false
+      );
+      
+      toast.success('Chat cleared');
+    } catch (error) {
+      console.error('Error clearing chat:', error);
+      toast.error('Failed to clear chat');
     }
-    toast.success('Chat cleared');
   };
 
   const handleUploadFiles = () => {
@@ -640,15 +583,20 @@ const Chat = () => {
 
   // Scroll to bottom of messages
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Use a small timeout to ensure the DOM has updated before scrolling
+    const scrollTimeout = setTimeout(() => {
+      if (messagesEndRef.current) {
+        messagesEndRef.current.scrollIntoView({ 
+          behavior: 'smooth',
+          block: 'end'
+        });
+      }
+    }, 100);
+    
+    return () => clearTimeout(scrollTimeout);
   }, [messages]);
 
-  const handleReferenceClick = (reference: { 
-    fileId: string; 
-    position?: number;
-    type?: string;
-    sourceId?: string;
-  }) => {
+  const handleReferenceClick = (reference: { fileId: string; position?: number }) => {
     // Find the file
     const file = knowledgebaseFiles.find(f => f.id === reference.fileId);
     
@@ -657,38 +605,70 @@ const Chat = () => {
       setActiveTab('transcripts');
       
       // If it's a YouTube video and has a position (timestamp)
-      if ((file.type.toLowerCase() === 'youtube' || reference.type === 'youtube') && reference.position) {
+      if (file.type.toLowerCase() === 'youtube' && reference.position !== undefined) {
         setCurrentTime(reference.position);
         
-        // Add a small delay to ensure the transcript tab is fully loaded
-        setTimeout(() => {
-          // Find the corresponding chunk element by ID
-          const chunkElement = document.getElementById(`chunk-${reference.position}`);
+        // If we have chunked transcript, find the chunk that contains this timestamp
+        if (chunkedTranscript.length > 0) {
+          const chunk = chunkedTranscript.find(
+            c => reference.position! >= c.startTime && reference.position! <= c.endTime
+          );
           
-          if (chunkElement && transcriptContainerRef.current) {
-            // Scroll the chunk into view
-            chunkElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          } else {
-            // If exact match not found, find the closest chunk
-            const closestChunk = chunkedTranscript.find(chunk => {
-              return reference.position! >= chunk.startTime && reference.position! <= chunk.endTime;
-            });
-            
-            if (closestChunk && transcriptContainerRef.current) {
-              const closestElement = document.getElementById(`chunk-${closestChunk.startTime}`);
-              if (closestElement) {
-                closestElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          if (chunk) {
+            // Find the element and scroll to it
+            setTimeout(() => {
+              const element = document.getElementById(`chunk-${chunk.startTime}`);
+              if (element) {
+                // Ensure the parent container is scrollable
+                const container = element.closest('.overflow-y-auto');
+                if (container) {
+                  // Calculate position to ensure the element is fully visible
+                  const containerRect = container.getBoundingClientRect();
+                  const elementRect = element.getBoundingClientRect();
+                  const offset = elementRect.top - containerRect.top;
+                  
+                  // Scroll with offset to ensure visibility
+                  container.scrollTo({
+                    top: container.scrollTop + offset - 100, // 100px buffer from the top
+                    behavior: 'smooth'
+                  });
+                } else {
+                  // Fallback to default scrollIntoView
+                  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                
+                element.classList.add('bg-yellow-100');
+                setTimeout(() => {
+                  element.classList.remove('bg-yellow-100');
+                }, 2000);
               }
-            }
+            }, 500);
           }
-        }, 300);
+        }
+      } else if (['pdf', 'text', 'docx', 'txt'].includes(file.type.toLowerCase())) {
+        // For text-based files, we could implement highlighting of the referenced text
+        // This would require additional logic to find the text in the content
+        toast.info('Navigated to referenced document');
+      } else if (reference.position !== undefined) {
+        // For non-YouTube files with a position, we need to scroll to the position in the text
+        setTimeout(() => {
+          const contentElement = document.querySelector('.overflow-y-auto.flex-grow');
+          if (contentElement && file.content_text) {
+            // Calculate approximate position in the content
+            const contentLength = file.content_text.length;
+            const scrollPercentage = Math.min(1, Math.max(0, reference.position! / contentLength));
+            
+            // Scroll to the approximate position
+            const scrollHeight = contentElement.scrollHeight;
+            contentElement.scrollTo({
+              top: scrollHeight * scrollPercentage - 100, // 100px buffer from the top
+              behavior: 'smooth'
+            });
+          }
+        }, 500);
       }
-      // Handle PDF documents with page positions
-      else if ((file.type.toLowerCase() === 'pdf' || reference.type === 'pdf') && reference.position) {
-        // If you have a PDF viewer component, you can navigate to the specific page
-        // For example: setPdfPage(reference.position);
-        console.log(`Navigating to PDF page ${reference.position}`);
-      }
+    } else {
+      toast.error('Referenced file not found');
     }
   };
 
@@ -698,8 +678,24 @@ const Chat = () => {
       return;
     }
 
+    if (!selectedKnowledgeBase || !currentChat) {
+      toast.error('Knowledge base or chat not selected');
+      return;
+    }
+
     try {
       setIsGeneratingNotes(true);
+      
+      // Add a temporary message to indicate that notes are being generated
+      const tempMessageId = `system-${Date.now()}`;
+      const tempMessage: Message = {
+        id: tempMessageId,
+        content: "# Generating Study Notes\n\nGenerating study notes from our conversation...",
+        isUser: false,
+        timestamp: new Date()
+      };
+      
+      setMessages(prevMessages => [...prevMessages, tempMessage]);
       
       // Format messages for the AI service
       const formattedMessages = messages.map(msg => ({
@@ -710,9 +706,28 @@ const Chat = () => {
       // Generate study notes
       const notes = await aiService.generateStudyNotes(formattedMessages);
       
-      // Set the notes and show the dialog
-      setStudyNotes(notes);
-      setShowNotesDialog(true);
+      // Remove the temporary message
+      setMessages(prevMessages => prevMessages.filter(msg => msg.id !== tempMessageId));
+      
+      // Add the study notes as a new AI message
+      const notesMessageId = `ai-notes-${Date.now()}`;
+      const notesMessage: Message = {
+        id: notesMessageId,
+        content: notes,
+        isUser: false,
+        timestamp: new Date()
+      };
+      
+      setMessages(prevMessages => [...prevMessages, notesMessage]);
+      
+      // Save the notes message to the database
+      await chatService.addMessage(
+        currentChat,
+        notes,
+        false
+      );
+      
+      toast.success('Study notes generated');
     } catch (error) {
       console.error('Error generating study notes:', error);
       toast.error('Failed to generate study notes');
@@ -721,350 +736,120 @@ const Chat = () => {
     }
   };
 
-  const handleCopyNotes = () => {
-    navigator.clipboard.writeText(studyNotes);
-    toast.success('Study notes copied to clipboard');
-  };
-
-  const handleSaveNotes = async () => {
-    if (!selectedKnowledgeBase || !user) {
-      toast.error('Knowledge base not selected');
-      return;
-    }
-
-    try {
-      // Create a title based on the conversation
-      const title = `Study Notes - ${new Date().toLocaleDateString()}`;
-      
-      // Save as a note in the knowledge base
-      await knowledgebaseService.addContentToKnowledgebase(
-        user.id,
-        selectedKnowledgeBase.id,
-        title,
-        'note',
-        studyNotes.length,
-        null,
-        studyNotes,
-        { source: 'study_notes', generated_from: 'chat' }
+  // Function to parse and render content with inline references
+  const renderContentWithReferences = (content: string, references?: { fileId: string; text: string; position?: number; }[]) => {
+    if (!references || references.length === 0) {
+      return (
+        <div className="prose prose-sm  max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
+          <ReactMarkdown>
+            {content}
+          </ReactMarkdown>
+        </div>
       );
+    }
+
+    // Check if the content already contains reference markers
+    // Support both formats: {{ref:fileId:position}} and {{ref}}
+    const hasReferenceMarkers = /\{\{ref(:[a-zA-Z0-9-]+:\d+)?\}\}/g.test(content);
+    
+    if (hasReferenceMarkers) {
+      // Create a map of reference IDs to their data for quick lookup
+      const referenceMap = new Map();
       
-      toast.success('Study notes saved to knowledge base');
-      setShowNotesDialog(false);
-    } catch (error) {
-      console.error('Error saving study notes:', error);
-      toast.error('Failed to save study notes');
+      // For the new format {{ref}}, we'll assign references sequentially
+      let refIndex = 0;
+      
+      // First, add all the explicit references (format: {{ref:fileId:position}})
+      references.forEach((ref) => {
+        const refKey = `{{ref:${ref.fileId}:${ref.position || 0}}}`;
+        referenceMap.set(refKey, ref);
+      });
+
+      // Split content by both reference patterns
+      const parts = content.split(/(\{\{ref(:[a-zA-Z0-9-]+:\d+)?\}\})/g);
+      
+      // Filter out the capture groups and empty strings
+      const filteredParts = parts.filter(part => part && !part.startsWith(':'));
+      
+      return (
+        <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
+          {filteredParts.map((part, index) => {
+            // Check if this part is a reference
+            if (part === '{{ref}}') {
+              // For the new format, assign references sequentially
+              const ref = references[refIndex % references.length];
+              refIndex++;
+              
+              return (
+                <span className="inline-block" key={`inline-ref-${index}`}>
+                  <ReferenceButton
+                    reference={ref}
+                    knowledgebaseFiles={knowledgebaseFiles}
+                    onReferenceClick={handleReferenceClick}
+                    getFileTypeLabel={getFileTypeLabel}
+                  />
+                </span>
+              );
+            } else if (referenceMap.has(part)) {
+              // For the explicit format
+              const ref = referenceMap.get(part);
+              
+              return (
+                <span className="inline-block" key={`inline-ref-${index}`}>
+                  <ReferenceButton
+                    reference={ref}
+                    knowledgebaseFiles={knowledgebaseFiles}
+                    onReferenceClick={handleReferenceClick}
+                    getFileTypeLabel={getFileTypeLabel}
+                  />
+                </span>
+              );
+            } else {
+              // Render regular markdown content
+              return part ? (
+                <ReactMarkdown key={`content-${index}`}>
+                  {part}
+                </ReactMarkdown>
+              ) : null;
+            }
+          })}
+        </div>
+      );
+    } else {
+      // For backward compatibility with existing messages that don't have inline references
+      // Just render the content normally and add references at the end
+      return (
+        <>
+          <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
+            <ReactMarkdown>
+              {content}
+            </ReactMarkdown>
+          </div>
+          
+          <div className="mt-2 pt-2 border-t border-gray-200 text-xs">
+            <p className="font-semibold mb-1">References:</p>
+            <div className="flex flex-wrap gap-2">
+              {references.map((ref, refIndex) => (
+                <ReferenceButton
+                  key={`ref-${refIndex}`}
+                  reference={ref}
+                  knowledgebaseFiles={knowledgebaseFiles}
+                  onReferenceClick={handleReferenceClick}
+                  getFileTypeLabel={getFileTypeLabel}
+                />
+              ))}
+            </div>
+          </div>
+        </>
+      );
     }
   };
 
-  // Update the renderMessageContent function to handle video/transcription references
-  const renderMessageContent = (content: string) => {
-    if (!content) return null;
-    
-    // Define regex patterns for different reference formats
-    const newReferenceRegex = /{{ref:([a-zA-Z0-9-]+):([a-zA-Z0-9-_]+):(\d+)}}/g;
-    const legacyReferenceRegex = /{{([a-zA-Z0-9-]+):(\d+)}}/g;
-    const uuidRegex = /{{([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})}}/gi;
-    const specificUuidRegex = /{{011ebcba-34bf-415f-be8f-740ee79b5cc0}}/g;
-    const specificRefUuidRegex = /{{ref:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})}}/g;
-    const youtubeRefUuidRegex = /{{ref:youtube:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})}}/g;
-    const videoTranscriptionRegex = /{{ref:video\/transcription:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):(\d+)}}/g;
-    
-    // Process content to replace any remaining UUID references
-    let processedContent = content;
-    
-    // Replace video/transcription references if found
-    if (videoTranscriptionRegex.test(processedContent)) {
-      // Reset regex lastIndex
-      videoTranscriptionRegex.lastIndex = 0;
-      
-      if (knowledgebaseFiles.length > 0) {
-        // Find video files first
-        const videoFiles = knowledgebaseFiles.filter(file => 
-          file.type.toLowerCase() === 'video' || 
-          file.type.toLowerCase() === 'youtube'
-        );
-        
-        if (videoFiles.length > 0) {
-          // Use the first video file for replacements
-          const videoFile = videoFiles[0];
-          const fileType = videoFile.type.toLowerCase();
-          const position = 0; // Default position
-          
-          // Replace video/transcription references with proper format
-          processedContent = processedContent.replace(
-            videoTranscriptionRegex,
-            (match, uuid, pos) => {
-              // Try to find the exact file with this UUID
-              const exactFile = knowledgebaseFiles.find(f => f.id === uuid);
-              if (exactFile) {
-                // Check if it's a YouTube video by looking at the metadata
-                if (exactFile.type.toLowerCase() === 'youtube' || 
-                    (exactFile.metadata && exactFile.metadata.videoId)) {
-                  // It's a YouTube video, use the YouTube format
-                  const videoId = exactFile.metadata?.videoId || exactFile.id;
-                  return `{{ref:youtube:${videoId}:${pos}}}`;
-                }
-                // Otherwise use the file's actual type
-                return `{{ref:${exactFile.type.toLowerCase()}:${exactFile.id}:${pos}}}`;
-              }
-              
-              // If not found, use the first video file
-              // Check if it's a YouTube video
-              if (fileType === 'youtube' && videoFile.metadata?.videoId) {
-                return `{{ref:youtube:${videoFile.metadata.videoId}:${pos}}}`;
-              }
-              return `{{ref:${fileType}:${videoFile.id}:${pos}}}`;
-            }
-          );
-        }
-      }
-    }
-    
-    // Replace UUID references if found
-    if (uuidRegex.test(processedContent) || 
-        specificUuidRegex.test(processedContent) || 
-        specificRefUuidRegex.test(processedContent) ||
-        youtubeRefUuidRegex.test(processedContent)) {
-      
-      // Reset regex lastIndex
-      uuidRegex.lastIndex = 0;
-      specificRefUuidRegex.lastIndex = 0;
-      youtubeRefUuidRegex.lastIndex = 0;
-      
-      if (knowledgebaseFiles.length > 0) {
-        // Find YouTube files first
-        const youtubeFiles = knowledgebaseFiles.filter(file => 
-          file.type.toLowerCase() === 'youtube' && file.metadata?.videoId
-        );
-        
-        if (youtubeFiles.length > 0) {
-          // Use the first YouTube file for replacements
-          const youtubeFile = youtubeFiles[0];
-          const videoId = youtubeFile.metadata?.videoId || 'videoId';
-          const position = 120; // Default position in seconds
-          
-          // Replace YouTube specific UUID references with proper format
-          processedContent = processedContent.replace(
-            youtubeRefUuidRegex, 
-            `{{ref:youtube:${videoId}:${position}}}`
-          );
-          
-          // Also replace other UUID formats with YouTube reference if they exist
-          processedContent = processedContent.replace(specificUuidRegex, `{{ref:youtube:${videoId}:${position}}}`);
-          processedContent = processedContent.replace(specificRefUuidRegex, `{{ref:youtube:${videoId}:${position}}}`);
-        } else {
-          // No YouTube files, use the first file of any type
-          const firstFile = knowledgebaseFiles[0];
-          const fileType = firstFile.type.toLowerCase();
-          
-          // Replace legacy format UUIDs
-          processedContent = processedContent.replace(uuidRegex, `{{ref:${fileType}:${firstFile.id}:0}}`);
-          processedContent = processedContent.replace(specificUuidRegex, `{{ref:${fileType}:${firstFile.id}:0}}`);
-          
-          // Replace new format UUIDs with specific reference
-          processedContent = processedContent.replace(
-            specificRefUuidRegex, 
-            `{{ref:${fileType}:${firstFile.id}:0}}`
-          );
-          
-          // Replace YouTube specific UUID references
-          processedContent = processedContent.replace(
-            youtubeRefUuidRegex, 
-            `{{ref:${fileType}:${firstFile.id}:0}}`
-          );
-        }
-      }
-    }
-    
-    // Function to parse references from content
-    const parseReferences = (text: string) => {
-      const references: {
-        fileId: string;
-        text: string;
-        position?: number;
-        type?: string;
-        sourceId?: string;
-      }[] = [];
-      
-      // Match new reference format: {{ref:type:sourceId:position}}
-      let match;
-      while ((match = newReferenceRegex.exec(text)) !== null) {
-        const [fullMatch, type, sourceId, position] = match;
-        
-        // For YouTube references, use the sourceId as is (it's the videoId)
-        if (type.toLowerCase() === 'youtube') {
-          references.push({
-            fileId: sourceId, // For YouTube, sourceId is used directly
-            text: fullMatch,
-            position: parseInt(position, 10),
-            type: 'youtube',
-            sourceId: sourceId
-          });
-        } else {
-          // For other types, sourceId is the fileId
-          // Check if this is actually a YouTube file
-          const file = knowledgebaseFiles.find(f => f.id === sourceId);
-          if (file && file.type.toLowerCase() === 'youtube') {
-            references.push({
-              fileId: sourceId,
-              text: fullMatch,
-              position: parseInt(position, 10),
-              type: 'youtube',
-              sourceId: file.metadata?.videoId
-            });
-          } else {
-            references.push({
-              fileId: sourceId,
-              text: fullMatch,
-              position: parseInt(position, 10),
-              type: type.toLowerCase()
-            });
-          }
-        }
-      }
-      
-      // Reset regex for next use
-      newReferenceRegex.lastIndex = 0;
-      
-      // Match video/transcription format: {{ref:video/transcription:uuid:position}}
-      videoTranscriptionRegex.lastIndex = 0;
-      while ((match = videoTranscriptionRegex.exec(text)) !== null) {
-        const [fullMatch, uuid, position] = match;
-        
-        // Find the file to determine its type
-        const file = knowledgebaseFiles.find(f => f.id === uuid);
-        
-        // Check if it's a YouTube video
-        if (file && (file.type.toLowerCase() === 'youtube' || (file.metadata && file.metadata.videoId))) {
-          references.push({
-            fileId: uuid,
-            text: fullMatch,
-            position: parseInt(position, 10),
-            type: 'youtube',
-            sourceId: file.metadata?.videoId
-          });
-        } else {
-          const fileType = file?.type.toLowerCase() || 'video';
-          references.push({
-            fileId: uuid,
-            text: fullMatch,
-            position: parseInt(position, 10),
-            type: fileType,
-            sourceId: file?.metadata?.videoId // Add videoId for video files
-          });
-        }
-      }
-      
-      // Match legacy reference format: {{fileId:position}}
-      legacyReferenceRegex.lastIndex = 0;
-      while ((match = legacyReferenceRegex.exec(text)) !== null) {
-        const [fullMatch, fileId, position] = match;
-        
-        // Find the file to determine its type
-        const file = knowledgebaseFiles.find(f => f.id === fileId);
-        
-        // Check if it's a YouTube video
-        if (file && (file.type.toLowerCase() === 'youtube' || (file.metadata && file.metadata.videoId))) {
-          references.push({
-            fileId,
-            text: fullMatch,
-            position: parseInt(position, 10),
-            type: 'youtube',
-            sourceId: file.metadata?.videoId
-          });
-        } else {
-          const fileType = file?.type.toLowerCase() || 'document';
-          references.push({
-            fileId,
-            text: fullMatch,
-            position: parseInt(position, 10),
-            type: fileType,
-            sourceId: file?.metadata?.videoId
-          });
-        }
-      }
-      
-      return references;
-    };
-    
-    // Parse references from the processed content
-    const references = parseReferences(processedContent);
-    
-    // Create a map of references for quick lookup
-    const referenceMap = new Map();
-    references.forEach(ref => {
-      referenceMap.set(ref.text, ref);
-    });
-    
-    // Split content by reference patterns and create React elements
-    const parts = processedContent.split(/({{ref:[a-zA-Z0-9-/]+:[a-zA-Z0-9-_]+:\d+}}|{{[a-zA-Z0-9-]+:\d+}})/g);
-    
-    return (
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          p: ({ node, ...props }) => {
-            const children = React.Children.toArray(props.children);
-            const processedChildren = children.map((child, index) => {
-              if (typeof child === 'string') {
-                // Process the string to replace reference patterns with ReferenceLink components
-                const textParts = child.split(/({{ref:[a-zA-Z0-9-/]+:[a-zA-Z0-9-_]+:\d+}}|{{[a-zA-Z0-9-]+:\d+}})/g);
-                
-                return textParts.map((part, partIndex) => {
-                  const reference = referenceMap.get(part);
-                  if (reference) {
-                    const file = knowledgebaseFiles.find(f => f.id === reference.fileId);
-                    return (
-                      <ReferenceLink
-                        key={`${index}-${partIndex}`}
-                        reference={reference}
-                        file={file}
-                        onClick={handleReferenceClick}
-                      />
-                    );
-                  }
-                  return part;
-                });
-              }
-              return child;
-            });
-            
-            return <p {...props}>{processedChildren}</p>;
-          },
-          li: ({ node, ...props }) => {
-            const children = React.Children.toArray(props.children);
-            const processedChildren = children.map((child, index) => {
-              if (typeof child === 'string') {
-                // Process the string to replace reference patterns with ReferenceLink components
-                const textParts = child.split(/({{ref:[a-zA-Z0-9-/]+:[a-zA-Z0-9-_]+:\d+}}|{{[a-zA-Z0-9-]+:\d+}})/g);
-                
-                return textParts.map((part, partIndex) => {
-                  const reference = referenceMap.get(part);
-                  if (reference) {
-                    const file = knowledgebaseFiles.find(f => f.id === reference.fileId);
-                    return (
-                      <ReferenceLink
-                        key={`${index}-${partIndex}`}
-                        reference={reference}
-                        file={file}
-                        onClick={handleReferenceClick}
-                      />
-                    );
-                  }
-                  return part;
-                });
-              }
-              return child;
-            });
-            
-            return <li {...props}>{processedChildren}</li>;
-          }
-        }}
-      >
-        {processedContent}
-      </ReactMarkdown>
-    );
-  };
+  // Update the AI service to modify the system prompt
+  useEffect(() => {
+    // Modify the system prompt to use the new reference format
+    // This is just to inform you that we need to update the AI service later
+  }, []);
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -1076,33 +861,32 @@ const Chat = () => {
           subtitle="Ask questions about your knowledge base" 
         />
         
-        <main className="flex-1 overflow-hidden flex">
+        <main className="flex-1 overflow-hidden flex flex-col md:flex-row">
           {/* Left side: Chat interface */}
           <div className="flex-1 flex flex-col overflow-hidden border-r">
             {/* Knowledge Base Selector */}
-            <div className="border-b p-4">
+            <div className="border-b p-4 bg-white">
               <div className="max-w-2xl mx-auto">
-                <KnowledgeBaseSelector 
-                  onSelect={handleKnowledgeBaseSelect}
-                  initialKnowledgeBaseId={initialKnowledgeBaseId}
-                />
-              </div>
-            </div>
-
-            {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto p-4 bg-gray-50">
-              {selectedKnowledgeBase ? (
-                <div className="max-w-2xl mx-auto space-y-4">
-                  <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-xl font-semibold">
-                      Chat with {selectedKnowledgeBase.title}
-                    </h2>
-                    <div className="flex gap-2">
+                {selectedKnowledgeBase && (
+                  <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                    <div className="flex flex-col md:flex-row items-start md:items-center gap-2 md:gap-4 w-full md:w-auto">
+                      <h2 className="text-xl font-semibold whitespace-nowrap mb-2 md:mb-0">
+                        Chat with {selectedKnowledgeBase.title}
+                      </h2>
+                      <div className="w-full md:w-auto">
+                        <KnowledgeBaseSelector 
+                          onSelect={handleKnowledgeBaseSelect}
+                          initialKnowledgeBaseId={initialKnowledgeBaseId}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 w-full md:w-auto justify-start md:justify-end mt-2 md:mt-0">
                       <Button
                         variant="outline"
                         size="sm"
                         onClick={handleClearChat}
                         disabled={messages.length <= 1}
+                        className="whitespace-nowrap flex-1 md:flex-none"
                       >
                         <Trash2 className="h-4 w-4 mr-2" />
                         Clear Chat
@@ -1112,13 +896,28 @@ const Chat = () => {
                         size="sm"
                         onClick={handleGenerateStudyNotes}
                         disabled={isGeneratingNotes || messages.length < 3}
+                        className="whitespace-nowrap flex-1 md:flex-none"
                       >
                         <BookOpen className="h-4 w-4 mr-2" />
-                        {isGeneratingNotes ? 'Generating...' : 'Generate Study Notes'}
+                        {isGeneratingNotes ? 'Generating...' : 'Generate Notes'}
                       </Button>
                     </div>
                   </div>
-                  
+                )}
+                
+                {!selectedKnowledgeBase && (
+                  <KnowledgeBaseSelector 
+                    onSelect={handleKnowledgeBaseSelect}
+                    initialKnowledgeBaseId={initialKnowledgeBaseId}
+                  />
+                )}
+              </div>
+            </div>
+
+            {/* Chat Messages */}
+            <div className="flex-1 overflow-y-auto p-4 bg-gray-50 relative">
+              {selectedKnowledgeBase ? (
+                <div className="max-w-2xl mx-auto space-y-4 pb-2">
                   {messages.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full text-center p-8">
                       <Bot className="h-12 w-12 text-gray-300 mb-4" />
@@ -1149,9 +948,7 @@ const Chat = () => {
                           {message.isUser ? (
                             <div className="whitespace-pre-wrap">{message.content}</div>
                           ) : (
-                            <div className="prose prose-sm max-w-none dark:prose-invert">
-                              {renderMessageContent(message.content)}
-                            </div>
+                            renderContentWithReferences(message.content, message.references)
                           )}
                           
                           <div className="mt-1 text-xs opacity-70">
@@ -1167,7 +964,7 @@ const Chat = () => {
                       </div>
                     ))
                   )}
-                  <div ref={messagesEndRef} />
+                  <div ref={messagesEndRef} className="h-0 w-full" />
                   
                   {isProcessing && (
                     <div className="flex justify-start">
@@ -1198,7 +995,7 @@ const Chat = () => {
             </div>
 
             {/* Chat Input */}
-            <div className="border-t p-4">
+            <div className="border-t p-4 bg-white">
               <div className="max-w-2xl mx-auto">
                 <div className="flex items-end gap-2">
                   <div className="flex-1 relative">
@@ -1247,7 +1044,7 @@ const Chat = () => {
           </div>
           
           {/* Right side: Transcripts and Files */}
-          <div className="w-[400px] flex flex-col bg-white">
+          <div className="w-[500px] flex flex-col bg-white">
             <Tabs defaultValue="transcripts" className="flex-1 flex flex-col" value={activeTab} onValueChange={(value) => setActiveTab(value as 'transcripts' | 'files')}>
               <div className="border-b px-4">
                 <TabsList className="w-full justify-start">
@@ -1257,7 +1054,7 @@ const Chat = () => {
               </div>
               
               {/* Transcripts Tab */}
-              <TabsContent value="transcripts" className="flex-1 flex flex-col p-0">
+              <TabsContent value="transcripts" className="flex-1 flex flex-col p-0 overflow-hidden">
                 {selectedFile ? (
                   <div className="flex flex-col h-full">
                     {/* File Header */}
@@ -1320,18 +1117,26 @@ const Chat = () => {
                           videoId={videoId} 
                           currentTime={currentTime}
                           onSeek={setCurrentTime}
-                          height={200}
+                          height={240}
                         />
                       </div>
                     )}
                     
                     {/* Content Area */}
-                    <div className="overflow-y-auto flex-grow" ref={transcriptContainerRef} style={{ maxHeight: isYoutubeVideo ? 'calc(100vh - 400px)' : 'calc(100vh - 200px)' }}>
+                    <div 
+                      className="overflow-y-auto flex-grow pb-24" 
+                      style={{ 
+                        maxHeight: isYoutubeVideo 
+                          ? 'calc(100vh - 450px)' 
+                          : 'calc(100vh - 250px)',
+                        minHeight: '300px'
+                      }}
+                    >
                       {isYoutubeVideo && chunkedTranscript.length > 0 ? (
-                        <div className="p-4 space-y-2">
+                        <div className="p-4 space-y-2 pb-12">
                           {chunkedTranscript.map((chunk, index) => (
                             <div 
-                              key={index}
+                              key={`chunk-${index}`}
                               id={`chunk-${chunk.startTime}`}
                               className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-gray-50 ${
                                 currentTime >= chunk.startTime && currentTime <= chunk.endTime 
@@ -1357,9 +1162,9 @@ const Chat = () => {
                           ))}
                         </div>
                       ) : (
-                        <div className="p-4">
-                          {selectedFile.content_text ? (
-                            <pre className="whitespace-pre-wrap font-sans text-sm">
+                        <div className="p-4 pb-16">
+                          {selectedFile?.content_text ? (
+                            <pre className="whitespace-pre-wrap font-sans text-sm min-h-[200px]">
                               {selectedFile.content_text}
                             </pre>
                           ) : (
@@ -1435,40 +1240,6 @@ const Chat = () => {
           </div>
         </main>
       </div>
-      
-      {/* Study Notes Dialog */}
-      <Dialog open={showNotesDialog} onOpenChange={setShowNotesDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
-          <DialogHeader>
-            <DialogTitle>Study Notes</DialogTitle>
-            <DialogDescription>
-              Generated study notes based on your conversation
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="flex-1 overflow-auto my-4">
-            <div className="bg-gray-50 p-4 rounded-md whitespace-pre-wrap font-mono text-sm">
-              {studyNotes}
-            </div>
-          </div>
-          
-          <DialogFooter className="flex justify-between items-center">
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={handleCopyNotes}>
-                <Copy className="h-4 w-4 mr-2" />
-                Copy to Clipboard
-              </Button>
-              <Button onClick={handleSaveNotes}>
-                <Save className="h-4 w-4 mr-2" />
-                Save to Knowledge Base
-              </Button>
-            </div>
-            <Button variant="ghost" onClick={() => setShowNotesDialog(false)}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 };
