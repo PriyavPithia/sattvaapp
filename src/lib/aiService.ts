@@ -10,6 +10,7 @@ interface Reference {
 interface AIResponse {
   text: string;
   references: Reference[];
+  isGenericResponse: boolean;
 }
 
 export const aiService = {
@@ -28,15 +29,17 @@ export const aiService = {
       } catch (searchError) {
         console.error('Error searching knowledge base:', searchError);
         return {
-          text: "# Error Searching Knowledge Base\n\nI encountered an error while searching your knowledge base. The search query format might be invalid. Please try rephrasing your question with simpler terms.",
-          references: []
+          text: "I encountered an error while searching your knowledge base. This might be due to:\n\n- A temporary service issue\n- Complex search terms\n- Technical limitations\n\nPlease try again with a simpler question or try again later.",
+          references: [],
+          isGenericResponse: true
         };
       }
       
       if (!relevantFiles || relevantFiles.length === 0) {
         return {
-          text: "# No Relevant Information Found\n\nI couldn't find any relevant information in your knowledge base to answer this question. Please try rephrasing your question or add more content to your knowledge base.",
-          references: []
+          text: "I don't have specific information about that in your knowledge base. Here's what I can suggest:\n\n- Try rephrasing your question with different keywords\n- Add more content to your knowledge base related to this topic\n- Check if your question is relevant to the content in this knowledge base",
+          references: [],
+          isGenericResponse: true
         };
       }
       
@@ -275,32 +278,33 @@ export const aiService = {
       // Return the original text with the reference markers intact
       return {
         text: cleanedResponseText,
-        references
+        references,
+        isGenericResponse: false
       };
     } catch (error) {
       console.error('Error querying OpenAI:', error);
       
-      // Check if it's a rate limit error
-      if (error.response && error.response.status === 429) {
+      if (error.message.includes('429')) {
         return {
-          text: "# Rate Limit Exceeded\n\nI'm sorry, but we've hit the rate limit for AI queries. Please try again in a few moments.",
-          references: []
+          text: "I'm sorry, but we've hit the rate limit for AI queries. Please try again in a few moments.",
+          references: [],
+          isGenericResponse: true
         };
       }
       
-      // Check if it's a token limit error
-      if (error.response && error.response.data && error.response.data.error && 
-          error.response.data.error.message && error.response.data.error.message.includes('token')) {
+      if (error.message.includes('content too large') || error.message.includes('maximum context length')) {
         return {
-          text: "# Content Too Large\n\nI'm sorry, but the knowledge base content is too large to process in a single query. Please try a more specific question or contact support to optimize your knowledge base.",
-          references: []
+          text: "I'm sorry, but the knowledge base content is too large to process in a single query. Please try a more specific question or contact support to optimize your knowledge base.",
+          references: [],
+          isGenericResponse: true
         };
       }
       
       // Generic error
       return {
-        text: "# Error Processing Request\n\nI'm sorry, I encountered an error while processing your request. Please try again later.",
-        references: []
+        text: "I'm sorry, I encountered an error while processing your request. Please try again later.",
+        references: [],
+        isGenericResponse: true
       };
     }
   },
@@ -327,7 +331,7 @@ export const aiService = {
         }));
       
       if (conversation.length === 0) {
-        return "# No Conversation Found\n\nThere isn't enough conversation to generate study notes. Please have a conversation with the AI first.";
+        return "There isn't enough conversation to generate study notes. Please have a conversation with the AI first.";
       }
       
       // Create a system prompt for generating study notes

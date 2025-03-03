@@ -44,6 +44,7 @@ type Message = {
     text: string;
     position?: number;
   }[];
+  isGenericResponse?: boolean;
 };
 
 // Custom component for rendering inline references
@@ -147,9 +148,10 @@ const Chat = () => {
               setMessages([
                 {
                   id: 'welcome',
-                  content: `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+                  content: `Hello! I'm your AI assistant for the "${selectedKnowledgeBase.title}" knowledge base. Ask me any questions about the content, and I'll provide answers with references to the source material.`,
                   isUser: false,
-                  timestamp: new Date()
+                  timestamp: new Date(),
+                  isGenericResponse: true
                 }
               ]);
             }
@@ -167,16 +169,17 @@ const Chat = () => {
             setMessages([
               {
                 id: 'welcome',
-                content: `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+                content: `Hello! I'm your AI assistant for the "${selectedKnowledgeBase.title}" knowledge base. Ask me any questions about the content, and I'll provide answers with references to the source material.`,
                 isUser: false,
-                timestamp: new Date()
+                timestamp: new Date(),
+                isGenericResponse: true
               }
             ]);
             
             // Save the welcome message
             await chatService.addMessage(
               newChat.id,
-              `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+              `Hello! I'm your AI assistant for the "${selectedKnowledgeBase.title}" knowledge base. Ask me any questions about the content, and I'll provide answers with references to the source material.`,
               false
             );
           }
@@ -242,7 +245,8 @@ const Chat = () => {
         content: aiResponse.text,
         isUser: false,
         timestamp: new Date(),
-        references: aiResponse.references
+        references: aiResponse.references,
+        isGenericResponse: aiResponse.isGenericResponse
       };
       
       // Add AI message to state
@@ -328,16 +332,17 @@ const Chat = () => {
       setMessages([
         {
           id: 'welcome',
-          content: `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+          content: `Hello! I'm your AI assistant for the "${selectedKnowledgeBase.title}" knowledge base. Ask me any questions about the content, and I'll provide answers with references to the source material.`,
           isUser: false,
-          timestamp: new Date()
+          timestamp: new Date(),
+          isGenericResponse: true
         }
       ]);
       
       // Add the welcome message to the database
       await chatService.addMessage(
         currentChat,
-        `# Welcome to Sattva AI\n\nHello! I'm your AI assistant. I'm connected to your "${selectedKnowledgeBase.title}" knowledge base. How can I help you today?`,
+        `Hello! I'm your AI assistant for the "${selectedKnowledgeBase.title}" knowledge base. Ask me any questions about the content, and I'll provide answers with references to the source material.`,
         false
       );
       
@@ -737,15 +742,25 @@ const Chat = () => {
   };
 
   // Function to parse and render content with inline references
-  const renderContentWithReferences = (content: string, references?: { fileId: string; text: string; position?: number; }[]) => {
+  const renderContentWithReferences = (content: string, references?: { fileId: string; text: string; position?: number; }[], isGenericResponse?: boolean) => {
     // Check if the content starts with a code block format that might be causing the issue
     const contentToRender = content.startsWith('```') && !content.startsWith('```json') && !content.startsWith('```html') && !content.startsWith('```css') && !content.startsWith('```js') && !content.startsWith('```typescript') && !content.startsWith('```jsx') && !content.startsWith('```tsx')
       ? content.replace(/^```.*?\n/, '').replace(/```$/, '') // Remove the code block markers
       : content;
       
     if (!references || references.length === 0) {
+      // For generic responses (like "no content found"), use a simpler style without markdown parsing
+      if (isGenericResponse) {
+        return (
+          <div className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-line">
+            {contentToRender}
+          </div>
+        );
+      }
+      
+      // For normal responses with no references, use markdown parsing
       return (
-        <div className="prose prose-sm  max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
+        <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
           <ReactMarkdown>
             {contentToRender}
           </ReactMarkdown>
@@ -953,7 +968,7 @@ const Chat = () => {
                           {message.isUser ? (
                             <div className="whitespace-pre-wrap">{message.content}</div>
                           ) : (
-                            renderContentWithReferences(message.content, message.references)
+                            renderContentWithReferences(message.content, message.references, message.isGenericResponse)
                           )}
                           
                           <div className="mt-1 text-xs opacity-70">
