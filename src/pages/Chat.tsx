@@ -904,16 +904,6 @@ const Chat = () => {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={handleClearChat}
-                        disabled={messages.length <= 1}
-                        className="whitespace-nowrap flex-1 md:flex-none"
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        Clear Chat
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
                         onClick={handleGenerateStudyNotes}
                         disabled={isGeneratingNotes || messages.length < 3}
                         className="whitespace-nowrap flex-1 md:flex-none"
@@ -1019,37 +1009,14 @@ const Chat = () => {
               <div className="max-w-2xl mx-auto">
                 <div className="flex items-end gap-2">
                   <div className="flex-1 relative">
-                    <Input
-                      placeholder={selectedKnowledgeBase 
-                        ? `Ask about your "${selectedKnowledgeBase.title}" knowledge base...` 
-                        : "Select a knowledge base to start..."
-                      }
+                    <Textarea
+                      placeholder={selectedKnowledgeBase ? "Type your message here..." : "Select a knowledge base to start chatting..."}
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
                       onKeyDown={handleKeyDown}
-                      className="pr-20 resize-none py-3 min-h-[56px]"
+                      className="pr-4 resize-none py-3 min-h-[56px]"
                       disabled={!selectedKnowledgeBase}
                     />
-                    <div className="absolute right-2 bottom-2 flex">
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        onClick={handleClearChat}
-                        className="h-8 w-8"
-                        title="Clear chat"
-                      >
-                        <Clock className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        onClick={handleUploadFiles}
-                        className="h-8 w-8"
-                        title="Upload files"
-                      >
-                        <Upload className="h-4 w-4" />
-                      </Button>
-                    </div>
                   </div>
                   <Button 
                     onClick={handleSendMessage} 
