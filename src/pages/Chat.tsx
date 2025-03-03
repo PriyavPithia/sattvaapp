@@ -738,11 +738,16 @@ const Chat = () => {
 
   // Function to parse and render content with inline references
   const renderContentWithReferences = (content: string, references?: { fileId: string; text: string; position?: number; }[]) => {
+    // Check if the content starts with a code block format that might be causing the issue
+    const contentToRender = content.startsWith('```') && !content.startsWith('```json') && !content.startsWith('```html') && !content.startsWith('```css') && !content.startsWith('```js') && !content.startsWith('```typescript') && !content.startsWith('```jsx') && !content.startsWith('```tsx')
+      ? content.replace(/^```.*?\n/, '').replace(/```$/, '') // Remove the code block markers
+      : content;
+      
     if (!references || references.length === 0) {
       return (
         <div className="prose prose-sm  max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
           <ReactMarkdown>
-            {content}
+            {contentToRender}
           </ReactMarkdown>
         </div>
       );
@@ -750,7 +755,7 @@ const Chat = () => {
 
     // Check if the content already contains reference markers
     // Support both formats: {{ref:fileId:position}} and {{ref}}
-    const hasReferenceMarkers = /\{\{ref(:[a-zA-Z0-9-]+:\d+)?\}\}/g.test(content);
+    const hasReferenceMarkers = /\{\{ref(:[a-zA-Z0-9-]+:\d+)?\}\}/g.test(contentToRender);
     
     if (hasReferenceMarkers) {
       // Create a map of reference IDs to their data for quick lookup
@@ -766,13 +771,13 @@ const Chat = () => {
       });
 
       // Split content by both reference patterns
-      const parts = content.split(/(\{\{ref(:[a-zA-Z0-9-]+:\d+)?\}\})/g);
+      const parts = contentToRender.split(/(\{\{ref(:[a-zA-Z0-9-]+:\d+)?\}\})/g);
       
       // Filter out the capture groups and empty strings
       const filteredParts = parts.filter(part => part && !part.startsWith(':'));
       
       return (
-        <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
+        <div className="prose prose-sm  max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
           {filteredParts.map((part, index) => {
             // Check if this part is a reference
             if (part === '{{ref}}') {
@@ -822,7 +827,7 @@ const Chat = () => {
         <>
           <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
             <ReactMarkdown>
-              {content}
+              {contentToRender}
             </ReactMarkdown>
           </div>
           

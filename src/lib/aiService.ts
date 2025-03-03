@@ -181,6 +181,22 @@ export const aiService = {
       // 5. Extract the AI response
       const aiResponseText = response.data.choices[0].message.content;
       
+      // Clean up any potential code block formatting issues
+      let cleanedResponseText = aiResponseText;
+      
+      // If the response starts with a code block marker without a language specifier,
+      // remove the code block markers to prevent rendering issues
+      if (cleanedResponseText.startsWith('```') && 
+          !cleanedResponseText.startsWith('```json') && 
+          !cleanedResponseText.startsWith('```html') && 
+          !cleanedResponseText.startsWith('```css') && 
+          !cleanedResponseText.startsWith('```js') && 
+          !cleanedResponseText.startsWith('```typescript') && 
+          !cleanedResponseText.startsWith('```jsx') && 
+          !cleanedResponseText.startsWith('```tsx')) {
+        cleanedResponseText = cleanedResponseText.replace(/^```.*?\n/, '').replace(/```$/, '');
+      }
+      
       // 6. Extract references from the response
       const references: Reference[] = [];
       // Update regex to handle both formats: {{ref:fileId:position}} and {{ref}}
@@ -189,7 +205,7 @@ export const aiService = {
       let referenceIds = new Set<string>();
       let autoRefIndex = 0;
       
-      while ((match = referenceRegex.exec(aiResponseText)) !== null) {
+      while ((match = referenceRegex.exec(cleanedResponseText)) !== null) {
         // Check if this is the new format ({{ref}}) or the old format ({{ref:fileId:position}})
         if (!match[1]) {
           // New format: {{ref}} - assign references sequentially from context
@@ -253,26 +269,39 @@ export const aiService = {
         }
       }
       
+      // Add all references to the result
+      autoRefIndex = 0;
+      
       // Return the original text with the reference markers intact
       return {
-        text: aiResponseText,
+        text: cleanedResponseText,
         references
       };
     } catch (error) {
       console.error('Error querying OpenAI:', error);
       
-      // Provide a more user-friendly error message
-      if (axios.isAxiosError(error) && error.response) {
-        if (error.response.status === 401) {
-          throw new Error('Invalid OpenAI API key. Please check your API key in the settings.');
-        } else if (error.response.status === 429) {
-          throw new Error('OpenAI API rate limit exceeded. Please try again later.');
-        } else {
-          throw new Error(`OpenAI API error: ${error.response.data.error?.message || 'Unknown error'}`);
-        }
+      // Check if it's a rate limit error
+      if (error.response && error.response.status === 429) {
+        return {
+          text: "# Rate Limit Exceeded\n\nI'm sorry, but we've hit the rate limit for AI queries. Please try again in a few moments.",
+          references: []
+        };
       }
       
-      throw new Error(`Failed to query AI: ${error.message || 'Unknown error'}`);
+      // Check if it's a token limit error
+      if (error.response && error.response.data && error.response.data.error && 
+          error.response.data.error.message && error.response.data.error.message.includes('token')) {
+        return {
+          text: "# Content Too Large\n\nI'm sorry, but the knowledge base content is too large to process in a single query. Please try a more specific question or contact support to optimize your knowledge base.",
+          references: []
+        };
+      }
+      
+      // Generic error
+      return {
+        text: "# Error Processing Request\n\nI'm sorry, I encountered an error while processing your request. Please try again later.",
+        references: []
+      };
     }
   },
   
