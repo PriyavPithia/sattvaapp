@@ -1133,7 +1133,7 @@ const Chat = () => {
                       }}
                     >
                       {isYoutubeVideo && chunkedTranscript.length > 0 ? (
-                        <div className="p-4 space-y-2 pb-24">
+                        <div className="p-4 space-y-2 pb-12">
                           {chunkedTranscript.map((chunk, index) => (
                             <div 
                               key={`chunk-${index}`}
@@ -1162,9 +1162,9 @@ const Chat = () => {
                           ))}
                         </div>
                       ) : (
-                        <div className="p-4 pb-24">
+                        <div className="p-4 pb-16">
                           {selectedFile?.content_text ? (
-                            <pre className="whitespace-pre-wrap font-sans text-sm min-h-[300px]">
+                            <pre className="whitespace-pre-wrap font-sans text-sm min-h-[200px]">
                               {selectedFile.content_text}
                             </pre>
                           ) : (
