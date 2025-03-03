@@ -143,6 +143,24 @@ export const aiService = {
         throw new Error('OpenAI API key is not set in environment variables');
       }
       
+      // Limit context size to prevent exceeding token limits
+      const limitedContext = context.map(ctx => {
+        // Limit each document to a maximum of 4000 characters
+        const maxContentLength = 4000;
+        const content = ctx.content.length > maxContentLength 
+          ? ctx.content.substring(0, maxContentLength) + "... (content truncated)"
+          : ctx.content;
+          
+        return {
+          ...ctx,
+          content
+        };
+      });
+      
+      // Limit the number of documents to prevent exceeding token limits
+      const maxDocuments = 5;
+      const truncatedContext = limitedContext.slice(0, maxDocuments);
+      
       const response = await axios.post(
         'https://api.openai.com/v1/chat/completions',
         {
@@ -153,7 +171,7 @@ export const aiService = {
               role: 'user', 
               content: `
                 Context:
-                ${context.map((ctx, index) => `
+                ${truncatedContext.map((ctx, index) => `
                   --- Document ${index + 1} (ID: ${ctx.fileId}, Type: ${ctx.fileType}) ---
                   ${ctx.content}
                 `).join('\n\n')}
@@ -284,14 +302,44 @@ export const aiService = {
     } catch (error) {
       console.error('Error querying OpenAI:', error);
       
-      if (error.message.includes('429')) {
-        return {
-          text: "I'm sorry, but we've hit the rate limit for AI queries. Please try again in a few moments.",
-          references: [],
-          isGenericResponse: true
-        };
+      // Check for specific error types
+      if (axios.isAxiosError(error) && error.response) {
+        const statusCode = error.response.status;
+        const errorMessage = error.response.data?.error?.message || 'Unknown error';
+        
+        console.error(`OpenAI API error (${statusCode}): ${errorMessage}`);
+        
+        if (statusCode === 401) {
+          return {
+            text: "I'm sorry, but there's an authentication issue with our AI service. Please contact support with error code: AUTH-401.",
+            references: [],
+            isGenericResponse: true
+          };
+        } else if (statusCode === 429) {
+          return {
+            text: "I'm sorry, but we've hit the rate limit for AI queries. Please try again in a few moments.",
+            references: [],
+            isGenericResponse: true
+          };
+        } else if (statusCode === 400) {
+          // Handle specific 400 error cases
+          if (errorMessage.includes('maximum context length')) {
+            return {
+              text: "I'm sorry, but the knowledge base content is too large to process in a single query. Please try a more specific question or contact support to optimize your knowledge base.",
+              references: [],
+              isGenericResponse: true
+            };
+          } else {
+            return {
+              text: `I'm sorry, but there was an issue with processing your request. Please try again with a simpler question. (Error: ${errorMessage})`,
+              references: [],
+              isGenericResponse: true
+            };
+          }
+        }
       }
       
+      // Handle non-Axios errors or other error types
       if (error.message.includes('content too large') || error.message.includes('maximum context length')) {
         return {
           text: "I'm sorry, but the knowledge base content is too large to process in a single query. Please try a more specific question or contact support to optimize your knowledge base.",
@@ -334,49 +382,25 @@ export const aiService = {
         return "There isn't enough conversation to generate study notes. Please have a conversation with the AI first.";
       }
       
-      // Create a system prompt for generating study notes
+      // Limit the conversation to prevent exceeding token limits
+      const maxMessages = 20;
+      const truncatedConversation = conversation.length > maxMessages 
+        ? [...conversation.slice(0, 5), ...conversation.slice(-15)] // Keep first 5 and last 15 messages
+        : conversation;
+      
       const systemPrompt = `
-        You are a university professor who creates well-structured study notes.
-        Based on the conversation provided, create comprehensive study notes that:
+        You are a university-level professor assistant that helps create study notes from conversations.
+        Your task is to analyze the conversation and extract the key concepts, definitions, and insights.
+        Organize this information into well-structured study notes.
         
-        1. Start with a clear title using # heading format
-        2. Include an introduction that summarizes the main topic
-        3. Organize information into logical sections with ## subheadings
-        4. Use bullet points (-) for key concepts and important points
-        5. Use numbered lists (1., 2., etc.) for sequential steps or processes
-        6. Highlight important definitions, theories, or formulas using **bold** text
-        7. Use > blockquotes for important notes, warnings, or callouts
-        8. Use *** for horizontal rules to separate major sections if needed
-        9. Include a summary or conclusion section at the end
-        10. Add a list of key terms or concepts if appropriate
-        
-        Format the notes using Markdown for better readability.
-        Focus only on factual information from the conversation.
-        Be concise but thorough.
-        
-        If you need to include references, you can use either:
-        1. The specific format {{ref:fileId:position}} where fileId is the document ID and position is the character position.
-        2. The simple format {{ref}} which will automatically reference documents in order.
-        
-        EXAMPLE FORMAT:
-        
-        # [Main Topic] Study Notes
-        
-        ## Introduction
-        [Brief overview of the topic]
-        
-        ## [First Major Section]
-        [Content explaining this section]
-        
-        ### [Subsection if needed]
-        - Key point 1
-        - Key point 2
-        
-        ## [Second Major Section]
-        1. Step one of the process
-        2. Step two of the process
-        
-        > **Important Note**: [Critical information to remember]
+        RESPONSE FORMAT:
+        - Start with a clear # title that summarizes the main topic
+        - Use ## subheadings to organize different sections
+        - Use bullet points for lists of related items
+        - Use numbered lists for sequential steps or processes
+        - Highlight important terms with **bold**
+        - Include examples where relevant
+        - End with a brief summary
         
         ## Summary
         [Brief recap of the most important points]
@@ -392,7 +416,7 @@ export const aiService = {
           model: 'gpt-3.5-turbo',
           messages: [
             { role: 'system', content: systemPrompt },
-            ...conversation,
+            ...truncatedConversation,
             { 
               role: 'user', 
               content: 'Please generate well-structured study notes based on our conversation above.'
@@ -414,16 +438,27 @@ export const aiService = {
       console.error('Error generating study notes:', error);
       
       if (axios.isAxiosError(error) && error.response) {
-        if (error.response.status === 401) {
+        const statusCode = error.response.status;
+        const errorMessage = error.response.data?.error?.message || 'Unknown error';
+        
+        console.error(`OpenAI API error (${statusCode}): ${errorMessage}`);
+        
+        if (statusCode === 401) {
           throw new Error('Invalid OpenAI API key. Please check your API key in the settings.');
-        } else if (error.response.status === 429) {
+        } else if (statusCode === 429) {
           throw new Error('OpenAI API rate limit exceeded. Please try again later.');
+        } else if (statusCode === 400) {
+          if (errorMessage.includes('maximum context length')) {
+            throw new Error('The conversation is too long to process. Please try with a shorter conversation.');
+          } else {
+            throw new Error(`OpenAI API error: ${errorMessage}`);
+          }
         } else {
-          throw new Error(`OpenAI API error: ${error.response.data.error?.message || 'Unknown error'}`);
+          throw new Error(`OpenAI API error: ${errorMessage}`);
         }
       }
       
-      throw new Error(`Failed to generate study notes: ${error.message || 'Unknown error'}`);
+      throw new Error('Failed to generate study notes. Please try again later.');
     }
   }
 }; 
