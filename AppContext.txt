@@ -1,0 +1,37 @@
+I want to build a user authenticated app with the following features:
+    - User can sign up and login
+    - User can create, read, update and delete a knowledegbase
+    - All the knowledegbases will be stored in a database
+    - The knowledegbases will include several file types which are Youtube videos, user upload videos, user upload audios, real time speech to text, pdf, pptx, doc, txt.
+    - User can also upload the file and it will be added to the knowledegbase.
+    - We will extract the text from the file types and store the text in the database. This will be the context for our Knowledegbase.
+    - User can ask questions about the knowledegbase and we will use Open AI API, chat gpt 3.5 turbo, to answer the questions.
+    - Answers will be recieved with reference points from the particular file the text is from stored in the database and shown on the chat interface.
+    - On the chat interface, user can see the chat history and the answers.
+    - The page also has a section to select the file and view the context and for youtube video we will show the video player.
+    - The Text in the context will be highlighted and autoscrolled and for youtube video player it will automatically play it from the timestamp of the reference points.
+
+Pages:
+1. Home page (Welcome to Sattva AI)
+    - Hero section showcasing and explaining the features of the app in a creative marketing orient way.
+    - Pricing section
+    - Footer
+2. Login and Signup page
+    - User can login and signup using email and password and google auth.
+3. Knowledgebase page 
+    - List of knowledegbases, 
+    - Create, View, Edit, Delete Knowledgebase 
+4. Chat page
+    - Chat interface
+    - Transcript/ context of the uploaded file.
+    - Select the file and view its context.
+
+Chat features: (Use open AI API, chat gpt 3.5 turbo, to answer the questions.)
+    - User can chat to the knowledegbase, on user query the most relevant chunks in the knowledegbase will be used to answer teh question.
+    - The AI should act as a University level professor and answer the questions accordingly from the context in the knowledegbase.
+    - The AI response should be shown to the user with correct format and reference points from the context.
+    - The refrence points should be inline with the text and should be shown to teh user as a clickable reference button indicating the file type and for youtube and user uploaded videos it should be timestamps.
+    - When user clicks reference points they should be shown the text highlighted and autoscrolled to the reference point on the transcription section.
+    - user messages and AI responses should be saved in the database and shown in a chat interface.
+    - On mount chat should autoscroll to bottom
+    - There should be a section to Generate Study Notes from the chat history.
