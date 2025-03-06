@@ -1,16 +1,14 @@
 import React, { useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
-  Home, 
   FileText, 
   MessageSquare, 
   Settings, 
   ChevronLeft, 
   ChevronRight,
-  Upload,
   LogOut
 } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
@@ -83,17 +81,19 @@ export function Sidebar({ className }: SidebarProps) {
     >
       <div className="flex items-center justify-between p-4 border-b">
         {!collapsed && (
-          <div className="flex items-center gap-2">
+          <Link to="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
             <div className="h-8 w-8 rounded-full bg-gradient-to-r from-sattva-600 to-sattva-800 flex items-center justify-center">
               <span className="text-white font-semibold text-md">S</span>
             </div>
             <span className="font-bold text-lg">Sattva AI</span>
-          </div>
+          </Link>
         )}
         {collapsed && (
-          <div className="h-8 w-8 mx-auto rounded-full bg-gradient-to-r from-sattva-600 to-sattva-800 flex items-center justify-center">
-            <span className="text-white font-semibold text-md">S</span>
-          </div>
+          <Link to="/" className="mx-auto hover:opacity-80 transition-opacity">
+            <div className="h-8 w-8 rounded-full bg-gradient-to-r from-sattva-600 to-sattva-800 flex items-center justify-center">
+              <span className="text-white font-semibold text-md">S</span>
+            </div>
+          </Link>
         )}
         <Button 
           variant="ghost" 
@@ -106,8 +106,7 @@ export function Sidebar({ className }: SidebarProps) {
       </div>
 
       <div className="flex flex-col gap-1 p-3">
-        <NavItem to="/" icon={Home} label="Home" />
-        <NavItem to="/dashboard" icon={FileText} label="Knowledge Base" />
+        <NavItem to="/dashboard" icon={FileText} label="Dashboard" />
         <NavItem to="/chat" icon={MessageSquare} label="Chat with AI" />
         <NavItem to="/settings" icon={Settings} label="Settings" />
       </div>

@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import { Chat, Message } from './supabase';
+import { Reference } from './aiService';
 
 export interface ChatMessage {
   id: string;
@@ -7,11 +8,7 @@ export interface ChatMessage {
   content: string;
   is_user: boolean;
   created_at: string;
-  references?: {
-    fileId: string;
-    text: string;
-    position?: number;
-  }[];
+  references?: Reference[];
 }
 
 // Chat operations
@@ -149,11 +146,7 @@ export const chatService = {
     chatId: string, 
     content: string, 
     isUser: boolean,
-    references?: {
-      fileId: string;
-      text: string;
-      position?: number;
-    }[]
+    references?: Reference[]
   ): Promise<ChatMessage> {
     try {
       const { data, error } = await supabase

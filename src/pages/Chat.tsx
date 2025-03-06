@@ -14,6 +14,7 @@ import { knowledgebaseService } from '@/lib/knowledgebaseService';
 import type { FileRecord, Knowledgebase } from '@/lib/supabase';
 import { YoutubePlayer } from '@/components/ui/YoutubePlayer';
 import ReactMarkdown from 'react-markdown';
+import type { Components } from 'react-markdown';
 import { 
   chunkTranscript, 
   extractYoutubeVideoId, 
@@ -33,11 +34,18 @@ import { useAuth } from '@/lib/AuthContext';
 import { chatService } from '@/lib/chatService';
 import { Textarea } from "@/components/ui/textarea";
 import { supabase } from '@/lib/supabase';
+import remarkGfm from 'remark-gfm';
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
+import { YoutubeCitationParser } from '@/components/chat/YoutubeCitationParser';
+import { TextCitationParser } from '@/components/chat/TextCitationParser';
+import { MixedCitationParser } from '@/components/chat/MixedCitationParser';
+import { highlightTextInElement } from '@/lib/textHighlighter';
+import { CitationsList } from '@/components/chat/CitationsList';
 
 type Message = {
   id: string;
   content: string;
-  isUser: boolean;
+  role: 'user' | 'assistant';
   timestamp: Date;
   references?: {
     fileId: string;
@@ -55,13 +63,17 @@ type ReferenceButtonProps = {
     position?: number;
   };
   knowledgebaseFiles: FileRecord[];
-  onReferenceClick: (reference: { fileId: string; position?: number }) => void;
+  onReferenceClick: (reference: { fileId: string; text?: string; position?: number }) => void;
   getFileTypeLabel: (type: string) => string;
 };
 
 const ReferenceButton = ({ reference, knowledgebaseFiles, onReferenceClick, getFileTypeLabel }: ReferenceButtonProps) => {
+  if (!reference || !reference.fileId || !Array.isArray(knowledgebaseFiles)) return null;
+  
   const file = knowledgebaseFiles.find(f => f.id === reference.fileId);
-  const fileType = file ? file.type.toLowerCase() : 'unknown';
+  if (!file) return null;
+  
+  const fileType = file.type?.toLowerCase() || 'unknown';
   
   let icon = <FileText className="h-3 w-3 mr-1" />;
   let label = getFileTypeLabel(fileType);
@@ -83,11 +95,11 @@ const ReferenceButton = ({ reference, knowledgebaseFiles, onReferenceClick, getF
   return (
     <button
       onClick={() => onReferenceClick(reference)}
-      className="inline-flex items-center px-2 py-0.5 rounded bg-sattva-50 border border-sattva-200 hover:bg-sattva-100 text-xs mx-1 align-middle text-sattva-700 transition-colors"
+      className="inline-flex items-center px-2 py-0.5 rounded bg-sattva-100 border border-sattva-300 hover:bg-sattva-200 text-xs mx-1 align-middle text-sattva-700 transition-colors"
       title={`View reference in ${file?.name || 'source'}`}
     >
       {icon}
-      {label}
+      <span className="font-medium">{label}</span>
     </button>
   );
 };
@@ -115,6 +127,22 @@ const Chat = () => {
   const [currentChat, setCurrentChat] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [isGeneratingNotes, setIsGeneratingNotes] = useState(false);
+  const chatContainerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const youtubePlayerRef = useRef<{ playFromTime: (time: number) => void; getPlayer: () => any } | null>(null);
+  
+  // Function to parse content and replace reference markers with buttons
+  const parseContentWithReferences = (text: string, refs?: { fileId: string; text: string; position?: number; }[]): string => {
+    if (!text) {
+      return text;
+    }
+    
+    // Just remove all reference markers without replacing them with buttons
+    return text
+      .replace(/\{\{ref:[^{}]+?(?:-\d+(?:\.\d+)?)?\}\}/g, '')
+      .replace(/\(ref:[a-zA-Z0-9-]+\)/g, '')
+      .replace(/🔴\s*\d+:\d+/g, '');
+  };
 
   useEffect(() => {
     // If a knowledge base is selected, create or load a chat
@@ -137,7 +165,7 @@ const Chat = () => {
               const formattedMessages = chatMessages.map(msg => ({
                 id: msg.id,
                 content: msg.content,
-                isUser: msg.is_user,
+                role: msg.is_user ? 'user' as const : 'assistant' as const,
                 timestamp: new Date(msg.created_at),
                 references: msg.references
               }));
@@ -149,7 +177,7 @@ const Chat = () => {
                 {
                   id: 'welcome',
                   content: `Hello! I'm your AI assistant for the "${selectedKnowledgeBase.title}" knowledge base. Ask me any questions about the content, and I'll provide answers with references to the source material.`,
-                  isUser: false,
+                  role: 'assistant' as const,
                   timestamp: new Date(),
                   isGenericResponse: true
                 }
@@ -170,7 +198,7 @@ const Chat = () => {
               {
                 id: 'welcome',
                 content: `Hello! I'm your AI assistant for the "${selectedKnowledgeBase.title}" knowledge base. Ask me any questions about the content, and I'll provide answers with references to the source material.`,
-                isUser: false,
+                role: 'assistant' as const,
                 timestamp: new Date(),
                 isGenericResponse: true
               }
@@ -208,11 +236,13 @@ const Chat = () => {
   };
 
   const handleSendMessage = async () => {
-    if (!inputMessage.trim()) return;
+    if (!inputMessage.trim() || isProcessing) return;
+    
     if (!selectedKnowledgeBase) {
       toast.error('Please select a knowledge base first');
       return;
     }
+    
     if (!currentChat) {
       toast.error('Chat not initialized properly');
       return;
@@ -223,7 +253,7 @@ const Chat = () => {
     const userMessage: Message = {
       id: userMessageId,
       content: inputMessage,
-      isUser: true,
+      role: 'user' as const,
       timestamp: new Date()
     };
     
@@ -243,7 +273,7 @@ const Chat = () => {
       const aiMessage: Message = {
         id: aiMessageId,
         content: aiResponse.text,
-        isUser: false,
+        role: 'assistant' as const,
         timestamp: new Date(),
         references: aiResponse.references,
         isGenericResponse: aiResponse.isGenericResponse
@@ -266,13 +296,8 @@ const Chat = () => {
         const referencedFile = knowledgebaseFiles.find(file => file.id === firstReference.fileId);
         
         if (referencedFile) {
-          setSelectedFile(referencedFile);
-          setActiveTab('transcripts');
-          
-          // If it's a YouTube video, set the current time
-          if (referencedFile.type.toLowerCase() === 'youtube' && firstReference.position) {
-            setCurrentTime(firstReference.position);
-          }
+          // Use handleSourceClick to set up the view without setting a timestamp
+          handleSourceClick(referencedFile.id);
         }
       }
     } catch (error) {
@@ -282,9 +307,10 @@ const Chat = () => {
       // Add error message
       const errorMessage: Message = {
         id: `error-${Date.now()}`,
-        content: "# Error Processing Request\n\nI'm sorry, I encountered an error while processing your request. Please try again later.",
-        isUser: false,
-        timestamp: new Date()
+        content: `I'm sorry, I encountered an error while processing your request. Please try again later.`,
+        role: 'assistant' as const,
+        timestamp: new Date(),
+        isGenericResponse: true
       };
       
       setMessages(prevMessages => [...prevMessages, errorMessage]);
@@ -292,7 +318,7 @@ const Chat = () => {
       // Save error message to database
       await chatService.addMessage(
         currentChat,
-        "# Error Processing Request\n\nI'm sorry, I encountered an error while processing your request. Please try again later.",
+        `I'm sorry, I encountered an error while processing your request. Please try again later.`,
         false
       );
     } finally {
@@ -333,7 +359,7 @@ const Chat = () => {
         {
           id: 'welcome',
           content: `Hello! I'm your AI assistant for the "${selectedKnowledgeBase.title}" knowledge base. Ask me any questions about the content, and I'll provide answers with references to the source material.`,
-          isUser: false,
+          role: 'assistant' as const,
           timestamp: new Date(),
           isGenericResponse: true
         }
@@ -360,6 +386,48 @@ const Chat = () => {
   const handleFileSelect = (file: FileRecord) => {
     setSelectedFile(file);
     setActiveTab('transcripts');
+    
+    // Reset YouTube-specific state
+    setIsYoutubeVideo(false);
+    setVideoId(null);
+    setCurrentTime(0);
+    
+    // Clear existing chunked transcript
+    setChunkedTranscript([]);
+    
+    // Process YouTube videos
+    if (file.type.toLowerCase() === 'youtube' && file.source_url) {
+      setIsYoutubeVideo(true);
+      const extractedVideoId = extractYoutubeVideoId(file.source_url);
+      if (extractedVideoId) {
+        setVideoId(extractedVideoId);
+      }
+      
+      // Process transcript if available
+      if (file.content_text) {
+        try {
+          // Parse the content text to get transcript segments
+          const segments = JSON.parse(file.content_text);
+          // Create chunks from the segments
+          const chunks = chunkTranscript(segments, chunkSize);
+          setChunkedTranscript(chunks);
+        } catch (error) {
+          console.error('Error parsing transcript:', error);
+        }
+      }
+    }
+    // Process audio/video files
+    else if (['audio', 'video'].includes(file.type.toLowerCase()) && file.content_text) {
+      try {
+        // Parse the content text to get transcript segments
+        const segments = JSON.parse(file.content_text);
+        // Create chunks from the segments
+        const chunks = chunkTranscript(segments, chunkSize);
+        setChunkedTranscript(chunks);
+      } catch (error) {
+        console.error('Error parsing transcript:', error);
+      }
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -377,6 +445,8 @@ const Chat = () => {
   };
 
   const getFileTypeLabel = (type: string) => {
+    if (!type) return 'Unknown';
+    
     switch (type.toLowerCase()) {
       case 'pdf':
         return 'PDF';
@@ -584,6 +654,15 @@ const Chat = () => {
   // Handle clicking on a transcript chunk
   const handleTranscriptChunkClick = (startTime: number) => {
     setCurrentTime(startTime);
+    
+    // Set the flag to indicate that the user explicitly requested playback
+    window.EXPLICIT_PLAY_REQUESTED = true;
+    
+    // Play the video from this timestamp when the user clicks on a transcript chunk
+    if (youtubePlayerRef.current) {
+      youtubePlayerRef.current.playFromTime(startTime);
+      console.log('Playing video from timestamp:', startTime);
+    }
   };
 
   // Scroll to bottom of messages
@@ -601,79 +680,429 @@ const Chat = () => {
     return () => clearTimeout(scrollTimeout);
   }, [messages]);
 
-  const handleReferenceClick = (reference: { fileId: string; position?: number }) => {
-    // Find the file
-    const file = knowledgebaseFiles.find(f => f.id === reference.fileId);
+  const handleReferenceClick = async (reference: { fileId: string; text: string; position?: number; }) => {
+    console.log('Reference clicked:', reference);
     
-    if (file) {
-      setSelectedFile(file);
-      setActiveTab('transcripts');
+    // Find the file in the knowledgebase files
+    const file = knowledgebaseFiles?.find(f => f.id === reference.fileId);
+    if (!file) {
+      console.error('File not found for reference:', reference);
+      return;
+    }
+    
+    console.log('File found:', file.name, file.type);
+    
+    // Set the selected file and active tab
+    setSelectedFile(file);
+    setActiveTab('transcripts');
+    
+    // Handle YouTube videos
+    if (file.type.toLowerCase() === 'youtube') {
+      // Set the current file
+      setIsYoutubeVideo(true);
       
-      // If it's a YouTube video and has a position (timestamp)
-      if (file.type.toLowerCase() === 'youtube' && reference.position !== undefined) {
-        setCurrentTime(reference.position);
-        
-        // If we have chunked transcript, find the chunk that contains this timestamp
-        if (chunkedTranscript.length > 0) {
-          const chunk = chunkedTranscript.find(
-            c => reference.position! >= c.startTime && reference.position! <= c.endTime
-          );
-          
-          if (chunk) {
-            // Find the element and scroll to it
-            setTimeout(() => {
-              const element = document.getElementById(`chunk-${chunk.startTime}`);
-              if (element) {
-                // Ensure the parent container is scrollable
-                const container = element.closest('.overflow-y-auto');
-                if (container) {
-                  // Calculate position to ensure the element is fully visible
-                  const containerRect = container.getBoundingClientRect();
-                  const elementRect = element.getBoundingClientRect();
-                  const offset = elementRect.top - containerRect.top;
-                  
-                  // Scroll with offset to ensure visibility
-                  container.scrollTo({
-                    top: container.scrollTop + offset - 100, // 100px buffer from the top
-                    behavior: 'smooth'
-                  });
-                } else {
-                  // Fallback to default scrollIntoView
-                  element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                }
-                
-                element.classList.add('bg-yellow-100');
-                setTimeout(() => {
-                  element.classList.remove('bg-yellow-100');
-                }, 2000);
-              }
-            }, 500);
+      // Extract the YouTube video ID
+      const videoId = extractYoutubeVideoId(file.source_url);
+      if (!videoId) {
+        console.error('Invalid YouTube URL:', file.source_url);
+        return;
+      }
+      
+      setVideoId(videoId);
+      
+      // If we don't have the chunked transcript yet, fetch and parse it
+      if (!chunkedTranscript) {
+        try {
+          // Fetch the transcript
+          const response = await fetch(`/api/youtube/transcript?videoId=${videoId}`);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch transcript: ${response.statusText}`);
           }
-        }
-      } else if (['pdf', 'text', 'docx', 'txt'].includes(file.type.toLowerCase())) {
-        // For text-based files, we could implement highlighting of the referenced text
-        // This would require additional logic to find the text in the content
-        toast.info('Navigated to referenced document');
-      } else if (reference.position !== undefined) {
-        // For non-YouTube files with a position, we need to scroll to the position in the text
-        setTimeout(() => {
-          const contentElement = document.querySelector('.overflow-y-auto.flex-grow');
-          if (contentElement && file.content_text) {
-            // Calculate approximate position in the content
-            const contentLength = file.content_text.length;
-            const scrollPercentage = Math.min(1, Math.max(0, reference.position! / contentLength));
+          
+          const data = await response.json();
+          const transcript = data.transcript;
+          
+          // Parse the transcript into chunks
+          const parsed = chunkTranscript(transcript);
+          setChunkedTranscript(parsed);
+          
+          // Find the chunk that contains this timestamp after setting the chunked transcript
+          setTimeout(() => {
+            scrollToTimestamp(reference.position!);
             
-            // Scroll to the approximate position
-            const scrollHeight = contentElement.scrollHeight;
-            contentElement.scrollTo({
-              top: scrollHeight * scrollPercentage - 100, // 100px buffer from the top
-              behavior: 'smooth'
-            });
+            // Only seek to the timestamp, don't play automatically
+            if (youtubePlayerRef.current) {
+              youtubePlayerRef.current.getPlayer()?.seekTo(reference.position!, true);
+              console.log('Seeking to timestamp:', reference.position);
+            }
+          }, 500);
+        } catch (error) {
+          console.error('Error parsing transcript:', error);
+        }
+      } else {
+        // If we already have the chunked transcript, just scroll to the timestamp
+        setTimeout(() => {
+          scrollToTimestamp(reference.position!);
+          
+          // Only seek to the timestamp, don't play automatically
+          if (youtubePlayerRef.current) {
+            youtubePlayerRef.current.getPlayer()?.seekTo(reference.position!, true);
+            console.log('Seeking to timestamp:', reference.position);
+          }
+        }, 300);
+      }
+    } else if (['audio', 'mp3', 'mpeg', 'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/webm', 'audio/ogg'].includes(file.type.toLowerCase()) || 
+               (file.name && file.name.toLowerCase().endsWith('.mp3')) || 
+               (file.source_url && file.source_url.toLowerCase().endsWith('.mp3'))) {
+      // Handle audio files with or without timestamps
+      console.log('Handling audio file reference:', file.name, file.type);
+      setIsYoutubeVideo(false);
+      
+      // Set current time if position is provided
+      if (reference.position !== undefined) {
+        setCurrentTime(reference.position);
+      }
+      
+      // Highlight the text if available
+      if (reference.text) {
+        console.log('Highlighting text in audio file:', reference.text);
+        
+        // Wait for the content to be rendered and tab to be active before highlighting
+        setTimeout(() => {
+          // Try different selectors for the content container
+          // First, look for containers within the transcript tab
+          const transcriptTab = document.querySelector('[data-state="active"][role="tabpanel"]');
+          let contentContainer = null;
+          
+          if (transcriptTab) {
+            // Look for containers within the active tab
+            contentContainer = 
+              transcriptTab.querySelector('.file-content-container') || 
+              transcriptTab.querySelector('.transcript-container') || 
+              transcriptTab.querySelector('.overflow-y-auto');
+            
+            console.log('Found transcript tab:', transcriptTab);
+          }
+          
+          // If no container found in the transcript tab, try global selectors
+          if (!contentContainer) {
+            contentContainer = 
+              document.querySelector('.file-content-container') || 
+              document.querySelector('.transcript-container') || 
+              document.querySelector('.overflow-y-auto');
+          }
+          
+          if (contentContainer) {
+            console.log('Found content container for highlighting:', contentContainer);
+            
+            // Give the container a moment to fully render its content
+            setTimeout(() => {
+              highlightTextInElement(reference.text, contentContainer!);
+            }, 300);
+          } else {
+            console.error('Content container not found for highlighting');
+          }
+        }, 500);
+      }
+    } else if (['video'].includes(file.type.toLowerCase()) && reference.position !== undefined) {
+      // Handle video files with timestamps
+      console.log('Handling video file reference:', file.name, file.type);
+      setIsYoutubeVideo(false);
+      setCurrentTime(reference.position);
+      
+      // Highlight the text if available
+      if (reference.text) {
+        console.log('Highlighting text in video file:', reference.text);
+        
+        // Wait for the content to be rendered and tab to be active before highlighting
+        setTimeout(() => {
+          // Try different selectors for the content container
+          // First, look for containers within the transcript tab
+          const transcriptTab = document.querySelector('[data-state="active"][role="tabpanel"]');
+          let contentContainer = null;
+          
+          if (transcriptTab) {
+            // Look for containers within the active tab
+            contentContainer = 
+              transcriptTab.querySelector('.file-content-container') || 
+              transcriptTab.querySelector('.transcript-container') || 
+              transcriptTab.querySelector('.overflow-y-auto');
+            
+            console.log('Found transcript tab:', transcriptTab);
+          }
+          
+          // If no container found in the transcript tab, try global selectors
+          if (!contentContainer) {
+            contentContainer = 
+              document.querySelector('.file-content-container') || 
+              document.querySelector('.transcript-container') || 
+              document.querySelector('.overflow-y-auto');
+          }
+          
+          if (contentContainer) {
+            console.log('Found content container for highlighting:', contentContainer);
+            
+            // Give the container a moment to fully render its content
+            setTimeout(() => {
+              highlightTextInElement(reference.text, contentContainer!);
+            }, 300);
+          } else {
+            console.error('Content container not found for highlighting');
           }
         }, 500);
       }
     } else {
-      toast.error('Referenced file not found');
+      // For other file types (PDF, text, etc.), highlight the referenced text
+      setIsYoutubeVideo(false);
+      
+      if (reference.text) {
+        console.log('Highlighting text in non-media file:', reference.text);
+        
+        // Wait for the content to be rendered and tab to be active before highlighting
+        setTimeout(() => {
+          // Try different selectors for the content container
+          // First, look for containers within the transcript tab
+          const transcriptTab = document.querySelector('[data-state="active"][role="tabpanel"]');
+          let contentContainer = null;
+          
+          if (transcriptTab) {
+            // Look for containers within the active tab
+            contentContainer = 
+              transcriptTab.querySelector('.file-content-container') || 
+              transcriptTab.querySelector('.transcript-container') || 
+              transcriptTab.querySelector('.overflow-y-auto');
+            
+            console.log('Found transcript tab:', transcriptTab);
+          }
+          
+          // If no container found in the transcript tab, try global selectors
+          if (!contentContainer) {
+            contentContainer = 
+              document.querySelector('.file-content-container') || 
+              document.querySelector('.transcript-container') || 
+              document.querySelector('.overflow-y-auto');
+          }
+          
+          if (!contentContainer) {
+            console.error('Content container not found for highlighting');
+            return;
+          }
+          
+          console.log('Found content container for highlighting:', contentContainer);
+          
+          // Give the container a moment to fully render its content
+          setTimeout(() => {
+            highlightTextInElement(reference.text, contentContainer!);
+          }, 300);
+        }, 500);
+      }
+    }
+  };
+
+  // Update the scrollToTimestamp function to use purple highlight instead of yellow
+  const scrollToTimestamp = (timestamp: number) => {
+    console.log('Scrolling to timestamp:', timestamp);
+    console.log('Chunked transcript length:', chunkedTranscript.length);
+    
+    if (timestamp === 0) {
+      console.log('Timestamp is 0, not scrolling');
+      return;
+    }
+    
+    // Find the chunk that contains this timestamp
+    const chunk = chunkedTranscript.find(
+      c => timestamp >= c.startTime && timestamp <= c.endTime
+    );
+    
+    console.log('Found chunk:', chunk);
+    
+    if (chunk) {
+      // Find the element and scroll to it
+      const element = document.getElementById(`chunk-${chunk.startTime}`);
+      console.log('Found element:', element);
+      
+      if (element) {
+        // Remove any existing highlights first - only in the transcript section
+        const highlightContainer = document.querySelector('.overflow-y-auto');
+        if (highlightContainer) {
+          highlightContainer.querySelectorAll('.highlight-reference').forEach(el => {
+            el.classList.remove('highlight-reference');
+            el.classList.remove('border-purple-400');
+            el.classList.remove('bg-purple-50');
+          });
+        }
+        
+        // Add highlight classes
+        element.classList.add('highlight-reference');
+        element.classList.add('border-purple-400');
+        element.classList.add('bg-purple-50');
+        
+        // Find the transcript container specifically
+        const transcriptContainer = element.closest('.overflow-y-auto');
+        if (transcriptContainer) {
+          // Wait a moment to ensure the DOM is updated
+          setTimeout(() => {
+            // Scroll the element into view within the transcript container
+            const { top: elementTop, height: elementHeight } = element.getBoundingClientRect();
+            const { top: containerTop, height: containerHeight } = transcriptContainer.getBoundingClientRect();
+            
+            const relativeTop = elementTop - containerTop + transcriptContainer.scrollTop;
+            const targetScrollTop = relativeTop - (containerHeight - elementHeight) / 2;
+            
+            // Ensure the target scroll position is within bounds
+            const maxScrollTop = transcriptContainer.scrollHeight - containerHeight;
+            const boundedScrollTop = Math.max(0, Math.min(targetScrollTop, maxScrollTop));
+            
+            console.log(`Scrolling transcript container to position: ${boundedScrollTop} (max: ${maxScrollTop})`);
+            
+            transcriptContainer.scrollTo({
+              top: boundedScrollTop,
+              behavior: 'smooth'
+            });
+            
+            // Double-check the scroll position after a short delay
+            setTimeout(() => {
+              if (Math.abs(transcriptContainer.scrollTop - boundedScrollTop) > 10) {
+                console.log(`Scroll position check failed. Current: ${transcriptContainer.scrollTop}, Target: ${boundedScrollTop}`);
+                // Try scrolling again
+                transcriptContainer.scrollTop = boundedScrollTop;
+              }
+            }, 300);
+          }, 100);
+        } else {
+          console.error('Transcript container not found');
+        }
+        
+        // Remove highlight after 30 seconds
+        setTimeout(() => {
+          element.classList.remove('highlight-reference');
+          element.classList.remove('border-purple-400');
+          element.classList.remove('bg-purple-50');
+        }, 30000);
+      }
+    }
+  };
+
+  // Helper function to get all text nodes in an element
+  const getTextNodes = (node: Node): Text[] => {
+    const textNodes: Text[] = [];
+    
+    const walk = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        textNodes.push(node as Text);
+      } else {
+        for (let i = 0; i < node.childNodes.length; i++) {
+          walk(node.childNodes[i]);
+        }
+      }
+    };
+    
+    walk(node);
+    return textNodes;
+  };
+
+  // Helper function to highlight text in the content
+  const highlightText = (textToFind: string) => {
+    if (!contentRef.current || !textToFind) {
+      return;
+    }
+    
+    console.log('Highlighting text:', textToFind);
+    
+    // Find the text in the content
+    const content = contentRef.current.textContent || '';
+    const index = content.indexOf(textToFind);
+    
+    if (index !== -1) {
+      // Create a range to highlight the text
+      const range = document.createRange();
+      const textNodes = getTextNodes(contentRef.current);
+      
+      let charCount = 0;
+      let startNode = null;
+      let startOffset = 0;
+      let endNode = null;
+      let endOffset = 0;
+      
+      // Find the start and end nodes/offsets
+      for (const node of textNodes) {
+        const nodeLength = node.textContent?.length || 0;
+        
+        if (!startNode && charCount + nodeLength > index) {
+          startNode = node;
+          startOffset = index - charCount;
+        }
+        
+        if (startNode && !endNode && charCount + nodeLength >= index + textToFind.length) {
+          endNode = node;
+          endOffset = index + textToFind.length - charCount;
+          break;
+        }
+        
+        charCount += nodeLength;
+      }
+      
+      if (startNode && endNode) {
+        // Scroll to the start node
+        startNode.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
+        // Highlight the text
+        const highlightEl = document.createElement('span');
+        highlightEl.className = 'bg-purple-100 highlight-reference';
+        
+        try {
+          range.setStart(startNode, startOffset);
+          range.setEnd(endNode, endOffset);
+          range.surroundContents(highlightEl);
+          
+          // Remove the highlight after 5 seconds
+          setTimeout(() => {
+            if (highlightEl.parentNode) {
+              // Replace the highlight element with its text content
+              highlightEl.parentNode.replaceChild(
+                document.createTextNode(highlightEl.textContent || ''),
+                highlightEl
+              );
+            }
+          }, 5000);
+        } catch (e) {
+          console.error('Error highlighting text:', e);
+          
+          // Fallback: just scroll to the element containing the text
+          const textElements = Array.from(contentRef.current.querySelectorAll('p, li, blockquote, h1, h2, h3, h4, h5, h6'));
+          const elementWithText = textElements.find(el => el.textContent?.includes(textToFind));
+          if (elementWithText) {
+            elementWithText.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            elementWithText.classList.add('bg-purple-100');
+            elementWithText.classList.add('highlight-reference');
+            setTimeout(() => {
+              elementWithText.classList.remove('bg-purple-100');
+              elementWithText.classList.remove('highlight-reference');
+            }, 5000);
+          }
+        }
+      }
+    } else {
+      // If exact text not found, try to find a close match
+      const textElements = Array.from(contentRef.current.querySelectorAll('p, li, blockquote, h1, h2, h3, h4, h5, h6'));
+      
+      // Try to find an element containing a significant portion of the text
+      const words = textToFind.split(/\s+/).filter(w => w.length > 3);
+      if (words.length > 0) {
+        const elementWithSimilarText = textElements.find(el => 
+          words.some(word => el.textContent?.includes(word))
+        );
+        
+        if (elementWithSimilarText) {
+          elementWithSimilarText.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          elementWithSimilarText.classList.add('bg-purple-100');
+          elementWithSimilarText.classList.add('highlight-reference');
+          setTimeout(() => {
+            elementWithSimilarText.classList.remove('bg-purple-100');
+            elementWithSimilarText.classList.remove('highlight-reference');
+          }, 5000);
+        }
+      }
     }
   };
 
@@ -696,16 +1125,16 @@ const Chat = () => {
       const tempMessage: Message = {
         id: tempMessageId,
         content: "# Generating Study Notes\n\nGenerating study notes from our conversation...",
-        isUser: false,
+        role: 'assistant' as const,
         timestamp: new Date()
       };
       
       setMessages(prevMessages => [...prevMessages, tempMessage]);
       
-      // Format messages for the AI service
+      // Format messages for the study notes generation
       const formattedMessages = messages.map(msg => ({
         content: msg.content,
-        isUser: msg.isUser
+        isUser: msg.role === 'user'
       }));
       
       // Generate study notes
@@ -718,8 +1147,8 @@ const Chat = () => {
       const notesMessageId = `ai-notes-${Date.now()}`;
       const notesMessage: Message = {
         id: notesMessageId,
-        content: notes,
-        isUser: false,
+        content: `# Study Notes\n\n${notes}`,
+        role: 'assistant' as const,
         timestamp: new Date()
       };
       
@@ -728,7 +1157,7 @@ const Chat = () => {
       // Save the notes message to the database
       await chatService.addMessage(
         currentChat,
-        notes,
+        `# Study Notes\n\n${notes}`,
         false
       );
       
@@ -743,126 +1172,83 @@ const Chat = () => {
 
   // Function to parse and render content with inline references
   const renderContentWithReferences = (content: string, references?: { fileId: string; text: string; position?: number; }[], isGenericResponse?: boolean) => {
-    // Check if the content starts with a code block format that might be causing the issue
-    const contentToRender = content.startsWith('```') && !content.startsWith('```json') && !content.startsWith('```html') && !content.startsWith('```css') && !content.startsWith('```js') && !content.startsWith('```typescript') && !content.startsWith('```jsx') && !content.startsWith('```tsx')
-      ? content.replace(/^```.*?\n/, '').replace(/```$/, '') // Remove the code block markers
-      : content;
-      
+    // Check if there are any references
     if (!references || references.length === 0) {
-      // For generic responses (like "no content found"), use a simpler style without markdown parsing
-      if (isGenericResponse) {
-        return (
-          <div className="text-sm text-gray-800 dark:text-gray-200 whitespace-pre-line">
-            {contentToRender}
-          </div>
-        );
-      }
-      
-      // For normal responses with no references, use markdown parsing
       return (
-        <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-2xl prose-h2:text-xl prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
-          <ReactMarkdown>
-            {contentToRender}
+        <div className="prose prose-sm max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+            {content || ''}
           </ReactMarkdown>
         </div>
       );
     }
-
-    // Check if the content already contains reference markers
-    // Support both formats: {{ref:fileId:position}} and {{ref}}
-    const hasReferenceMarkers = /\{\{ref(:[a-zA-Z0-9-]+:\d+)?\}\}/g.test(contentToRender);
     
-    if (hasReferenceMarkers) {
-      // Create a map of reference IDs to their data for quick lookup
-      const referenceMap = new Map();
-      
-      // For the new format {{ref}}, we'll assign references sequentially
-      let refIndex = 0;
-      
-      // First, add all the explicit references (format: {{ref:fileId:position}})
-      references.forEach((ref) => {
-        const refKey = `{{ref:${ref.fileId}:${ref.position || 0}}}`;
-        referenceMap.set(refKey, ref);
-      });
-
-      // Split content by both reference patterns
-      const parts = contentToRender.split(/(\{\{ref(:[a-zA-Z0-9-]+:\d+)?\}\})/g);
-      
-      // Filter out the capture groups and empty strings
-      const filteredParts = parts.filter(part => part && !part.startsWith(':'));
-      
-      return (
-        <div className="prose prose-sm  max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
-          {filteredParts.map((part, index) => {
-            // Check if this part is a reference
-            if (part === '{{ref}}') {
-              // For the new format, assign references sequentially
-              const ref = references[refIndex % references.length];
-              refIndex++;
-              
-              return (
-                <span className="inline-block" key={`inline-ref-${index}`}>
-                  <ReferenceButton
-                    reference={ref}
-                    knowledgebaseFiles={knowledgebaseFiles}
-                    onReferenceClick={handleReferenceClick}
-                    getFileTypeLabel={getFileTypeLabel}
-                  />
-                </span>
-              );
-            } else if (referenceMap.has(part)) {
-              // For the explicit format
-              const ref = referenceMap.get(part);
-              
-              return (
-                <span className="inline-block" key={`inline-ref-${index}`}>
-                  <ReferenceButton
-                    reference={ref}
-                    knowledgebaseFiles={knowledgebaseFiles}
-                    onReferenceClick={handleReferenceClick}
-                    getFileTypeLabel={getFileTypeLabel}
-                  />
-                </span>
-              );
-            } else {
-              // Render regular markdown content
-              return part ? (
-                <ReactMarkdown key={`content-${index}`}>
-                  {part}
-                </ReactMarkdown>
-              ) : null;
-            }
-          })}
-        </div>
-      );
-    } else {
-      // For backward compatibility with existing messages that don't have inline references
-      // Just render the content normally and add references at the end
-      return (
-        <>
-          <div className="prose prose-sm md:prose-base lg:prose-lg max-w-none dark:prose-invert prose-headings:font-bold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-p:my-2 prose-ul:my-2 prose-ol:my-2 prose-li:my-1 prose-blockquote:border-l-4 prose-blockquote:border-blue-500 prose-blockquote:pl-4 prose-blockquote:italic prose-blockquote:bg-gray-50 dark:prose-blockquote:bg-gray-800 prose-blockquote:py-1 prose-blockquote:rounded-sm">
-            <ReactMarkdown>
-              {contentToRender}
-            </ReactMarkdown>
-          </div>
-          
-          <div className="mt-2 pt-2 border-t border-gray-200 text-xs">
-            <p className="font-semibold mb-1">References:</p>
-            <div className="flex flex-wrap gap-2">
-              {references.map((ref, refIndex) => (
-                <ReferenceButton
-                  key={`ref-${refIndex}`}
-                  reference={ref}
-                  knowledgebaseFiles={knowledgebaseFiles}
-                  onReferenceClick={handleReferenceClick}
-                  getFileTypeLabel={getFileTypeLabel}
-                />
-              ))}
-            </div>
-          </div>
-        </>
-      );
-    }
+    // Check if there are any YouTube references
+    const hasYoutubeReferences = references.some(ref => {
+      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
+      return file?.type.toLowerCase() === 'youtube';
+    });
+    
+    // Check if there are any non-YouTube references
+    const hasOtherReferences = references.some(ref => {
+      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
+      return file?.type.toLowerCase() !== 'youtube';
+    });
+    
+    // Separate YouTube references from other references
+    const youtubeReferences = references.filter(ref => {
+      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
+      return file?.type.toLowerCase() === 'youtube';
+    });
+    
+    const otherReferences = references.filter(ref => {
+      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
+      return file?.type.toLowerCase() !== 'youtube';
+    });
+    
+    return (
+      <div className="prose prose-sm max-w-none">
+        {hasYoutubeReferences && !hasOtherReferences && (
+          /* Only YouTube references - use YoutubeCitationParser */
+          <YoutubeCitationParser
+            content={content || ''}
+            references={youtubeReferences}
+            knowledgebaseFiles={knowledgebaseFiles || []}
+            onReferenceClick={handleReferenceClick}
+          />
+        )}
+        
+        {!hasYoutubeReferences && hasOtherReferences && (
+          /* Only non-YouTube references - use TextCitationParser */
+          <TextCitationParser
+            content={content || ''}
+            references={otherReferences}
+            knowledgebaseFiles={knowledgebaseFiles || []}
+            onReferenceClick={handleReferenceClick}
+          />
+        )}
+        
+        {hasYoutubeReferences && hasOtherReferences && (
+          /* Both types of references - use MixedCitationParser */
+          <MixedCitationParser
+            content={content || ''}
+            references={references}
+            knowledgebaseFiles={knowledgebaseFiles || []}
+            onReferenceClick={handleReferenceClick}
+          />
+        )}
+        
+        {/* Always show the CitationsList component for sources at the bottom if there are references */}
+        {references && references.length > 0 && (
+          <CitationsList 
+            references={references}
+            knowledgebaseFiles={knowledgebaseFiles || []}
+            onReferenceClick={handleReferenceClick}
+            onSourceClick={handleSourceClick}
+          />
+        )}
+      </div>
+    );
   };
 
   // Update the AI service to modify the system prompt
@@ -871,363 +1257,534 @@ const Chat = () => {
     // This is just to inform you that we need to update the AI service later
   }, []);
 
-  return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar />
-      
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <Header 
-          title="Chat with AI" 
-          subtitle="Ask questions about your knowledge base" 
-        />
-        
-        <main className="flex-1 overflow-hidden flex flex-col md:flex-row">
-          {/* Left side: Chat interface */}
-          <div className="flex-1 flex flex-col overflow-hidden border-r">
-            {/* Knowledge Base Selector */}
-            <div className="border-b p-4 bg-white">
-              <div className="max-w-2xl mx-auto">
-                {selectedKnowledgeBase && (
-                  <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-                    <div className="flex flex-col md:flex-row items-start md:items-center gap-2 md:gap-4 w-full md:w-auto">
-                      <h2 className="text-xl font-semibold whitespace-nowrap mb-2 md:mb-0">
-                        Chat with {selectedKnowledgeBase.title}
-                      </h2>
-                      <div className="w-full md:w-auto">
-                        <KnowledgeBaseSelector 
-                          onSelect={handleKnowledgeBaseSelect}
-                          initialKnowledgeBaseId={initialKnowledgeBaseId}
-                        />
-                      </div>
-                    </div>
-                    <div className="flex gap-2 w-full md:w-auto justify-start md:justify-end mt-2 md:mt-0">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleGenerateStudyNotes}
-                        disabled={isGeneratingNotes || messages.length < 3}
-                        className="whitespace-nowrap flex-1 md:flex-none"
-                      >
-                        <BookOpen className="h-4 w-4 mr-2" />
-                        {isGeneratingNotes ? 'Generating...' : 'Generate Notes'}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-                
-                {!selectedKnowledgeBase && (
-                  <KnowledgeBaseSelector 
-                    onSelect={handleKnowledgeBaseSelect}
-                    initialKnowledgeBaseId={initialKnowledgeBaseId}
-                  />
-                )}
-              </div>
-            </div>
-
-            {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto p-4 bg-gray-50 relative">
-              {selectedKnowledgeBase ? (
-                <div className="max-w-2xl mx-auto space-y-4 pb-2">
-                  {messages.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                      <Bot className="h-12 w-12 text-gray-300 mb-4" />
-                      <h3 className="text-lg font-medium">No messages yet</h3>
-                      <p className="text-sm text-muted-foreground mt-1 max-w-xs">
-                        Start a conversation by typing a message below.
-                      </p>
-                    </div>
-                  ) : (
-                    messages.map((message, index) => (
-                      <div 
-                        key={message.id} 
-                        className={`flex ${message.isUser ? 'justify-end' : 'justify-start'} mb-4`}
-                      >
-                        {!message.isUser && (
-                          <div className="flex-shrink-0 mr-3">
-                            <Bot className="h-8 w-8 rounded-full bg-sattva-100 p-1 text-sattva-600" />
-                          </div>
-                        )}
-                        
-                        <div 
-                          className={`max-w-[80%] rounded-lg p-4 ${
-                            message.isUser 
-                              ? 'bg-sattva-600 text-white' 
-                              : 'bg-gray-100 text-gray-800'
-                          }`}
-                        >
-                          {message.isUser ? (
-                            <div className="whitespace-pre-wrap">{message.content}</div>
-                          ) : (
-                            renderContentWithReferences(message.content, message.references, message.isGenericResponse)
-                          )}
-                          
-                          <div className="mt-1 text-xs opacity-70">
-                            {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </div>
-                        </div>
-                        
-                        {message.isUser && (
-                          <div className="flex-shrink-0 ml-3">
-                            <UserAvatar />
-                          </div>
-                        )}
-                      </div>
-                    ))
-                  )}
-                  <div ref={messagesEndRef} className="h-0 w-full" />
-                  
-                  {isProcessing && (
-                    <div className="flex justify-start">
-                      <div className="flex max-w-[80%] flex-row">
-                        <div className="flex-shrink-0 mr-3">
-                          <Bot className="h-8 w-8 rounded-full bg-sattva-100 p-1 text-sattva-600" />
-                        </div>
-                        <div className="rounded-lg bg-gray-100 p-4 text-gray-800">
-                          <div className="flex space-x-2">
-                            <div className="h-2 w-2 rounded-full bg-sattva-400 animate-bounce"></div>
-                            <div className="h-2 w-2 rounded-full bg-sattva-400 animate-bounce [animation-delay:0.2s]"></div>
-                            <div className="h-2 w-2 rounded-full bg-sattva-400 animate-bounce [animation-delay:0.4s]"></div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+  // Find the renderMessage function and update it to include the CitationsList component
+  const renderMessage = (message: Message) => {
+    const isUser = message.role === 'user';
+    
+    // Check if there are any references
+    if (!message.references || message.references.length === 0) {
+      return (
+        <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
+          <div className={`flex ${isUser ? 'flex-row-reverse' : 'flex-row'} max-w-[80%]`}>
+            <div className={`flex-shrink-0 ${isUser ? 'ml-3' : 'mr-3'}`}>
+              {isUser ? (
+                <UserAvatar className="h-8 w-8" />
               ) : (
-                <div className="flex flex-col items-center justify-center h-full text-center p-8">
-                  <FileText className="h-12 w-12 text-gray-300 mb-4" />
-                  <h3 className="text-lg font-medium">Select a Knowledge Base</h3>
-                  <p className="text-sm text-muted-foreground mt-1 max-w-xs">
-                    Choose a knowledge base from the dropdown above to start chatting.
-                  </p>
+                <div className="h-8 w-8 rounded-full bg-sattva-600 flex items-center justify-center text-white">
+                  <Bot className="h-5 w-5" />
                 </div>
               )}
             </div>
-
-            {/* Chat Input */}
-            <div className="border-t p-4 bg-white">
-              <div className="max-w-2xl mx-auto">
-                <div className="flex items-end gap-2">
-                  <div className="flex-1 relative">
-                    <Textarea
-                      placeholder={selectedKnowledgeBase ? "Type your message here..." : "Select a knowledge base to start chatting..."}
-                      value={inputMessage}
-                      onChange={(e) => setInputMessage(e.target.value)}
-                      onKeyDown={handleKeyDown}
-                      className="pr-4 resize-none py-3 min-h-[56px]"
-                      disabled={!selectedKnowledgeBase}
-                    />
+            
+            <div>
+              <div className={`rounded-lg px-4 py-3 ${
+                isUser 
+                  ? 'bg-sattva-600 text-white' 
+                  : 'bg-white border border-sattva-200 shadow-sm'
+              }`}>
+                {isUser ? (
+                  <div className="whitespace-pre-wrap">{message.content}</div>
+                ) : (
+                  <div className="prose prose-sm max-w-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {message.content || ''}
+                    </ReactMarkdown>
                   </div>
-                  <Button 
-                    onClick={handleSendMessage} 
-                    disabled={!inputMessage.trim() || !selectedKnowledgeBase}
-                    className="bg-sattva-600 hover:bg-sattva-700 h-[56px] px-6"
-                  >
-                    <SendHorizonal className="h-5 w-5" />
-                  </Button>
-                </div>
+                )}
+              </div>
+              
+              {/* Add timestamp */}
+              <div className="mt-1 text-xs text-sattva-400 text-right">
+                {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
             </div>
           </div>
-          
-          {/* Right side: Transcripts and Files */}
-          <div className="w-[500px] flex flex-col bg-white">
-            <Tabs defaultValue="transcripts" className="flex-1 flex flex-col" value={activeTab} onValueChange={(value) => setActiveTab(value as 'transcripts' | 'files')}>
-              <div className="border-b px-4">
-                <TabsList className="w-full justify-start">
-                  <TabsTrigger value="transcripts">Transcripts</TabsTrigger>
-                  <TabsTrigger value="files">Files</TabsTrigger>
-                </TabsList>
+        </div>
+      );
+    }
+    
+    // Check if there are any YouTube references
+    const hasYoutubeReferences = message.references.some(ref => {
+      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
+      return file?.type.toLowerCase() === 'youtube';
+    });
+    
+    // Check if there are any non-YouTube references
+    const hasOtherReferences = message.references.some(ref => {
+      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
+      return file?.type.toLowerCase() !== 'youtube';
+    });
+    
+    // Separate YouTube references from other references
+    const youtubeReferences = message.references.filter(ref => {
+      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
+      return file?.type.toLowerCase() === 'youtube';
+    });
+    
+    const otherReferences = message.references.filter(ref => {
+      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
+      return file?.type.toLowerCase() !== 'youtube';
+    });
+    
+    return (
+      <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
+        <div className={`flex ${isUser ? 'flex-row-reverse' : 'flex-row'} max-w-[80%]`}>
+          <div className={`flex-shrink-0 ${isUser ? 'ml-3' : 'mr-3'}`}>
+            {isUser ? (
+              <UserAvatar className="h-8 w-8" />
+            ) : (
+              <div className="h-8 w-8 rounded-full bg-sattva-600 flex items-center justify-center text-white">
+                <Bot className="h-5 w-5" />
               </div>
-              
-              {/* Transcripts Tab */}
-              <TabsContent value="transcripts" className="flex-1 flex flex-col p-0 overflow-hidden">
-                {selectedFile ? (
-                  <div className="flex flex-col h-full">
-                    {/* File Header */}
-                    <div className="p-4 border-b flex-shrink-0">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <h3 className="font-medium text-sm truncate">{selectedFile.name}</h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs px-2 py-0.5 bg-gray-100 rounded-full">
-                              {getFileTypeLabel(selectedFile.type)}
-                            </span>
-                            {selectedFile.metadata?.duration && (
-                              <span className="text-xs text-gray-500">
-                                {formatDuration(selectedFile.metadata.duration)}
-                              </span>
-                            )}
-                            {selectedFile.metadata?.page_count && (
-                              <span className="text-xs text-gray-500">
-                                {selectedFile.metadata.page_count} pages
-                              </span>
-                            )}
+            )}
+          </div>
+          
+          <div>
+            <div className={`rounded-lg px-4 py-3 ${
+              isUser 
+                ? 'bg-sattva-600 text-white' 
+                : 'bg-white border border-sattva-200 shadow-sm'
+            }`}>
+              {isUser ? (
+                <div className="whitespace-pre-wrap">{message.content}</div>
+              ) : (
+                <div className="prose prose-sm max-w-none">
+                  {hasYoutubeReferences && !hasOtherReferences && (
+                    /* Only YouTube references - use YoutubeCitationParser */
+                    <YoutubeCitationParser
+                      content={message.content || ''}
+                      references={youtubeReferences}
+                      knowledgebaseFiles={knowledgebaseFiles || []}
+                      onReferenceClick={handleReferenceClick}
+                    />
+                  )}
+                  
+                  {!hasYoutubeReferences && hasOtherReferences && (
+                    /* Only non-YouTube references - use TextCitationParser */
+                    <TextCitationParser
+                      content={message.content || ''}
+                      references={otherReferences}
+                      knowledgebaseFiles={knowledgebaseFiles || []}
+                      onReferenceClick={handleReferenceClick}
+                    />
+                  )}
+                  
+                  {hasYoutubeReferences && hasOtherReferences && (
+                    /* Both types of references - use MixedCitationParser */
+                    <MixedCitationParser
+                      content={message.content || ''}
+                      references={message.references}
+                      knowledgebaseFiles={knowledgebaseFiles || []}
+                      onReferenceClick={handleReferenceClick}
+                    />
+                  )}
+                  
+                  {/* Always show the CitationsList component for sources at the bottom if there are references */}
+                  {message.references && message.references.length > 0 && (
+                    <div className="mt-4">
+                      <CitationsList 
+                        references={message.references}
+                        knowledgebaseFiles={knowledgebaseFiles || []}
+                        onReferenceClick={handleReferenceClick}
+                        onSourceClick={handleSourceClick}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Add timestamp */}
+            <div className="mt-1 text-xs text-sattva-400 text-right">
+              {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Handle clicking on a source link (without setting timestamp)
+  const handleSourceClick = (fileId: string) => {
+    if (!fileId || !Array.isArray(knowledgebaseFiles)) {
+      console.error('Invalid file ID or knowledgebase files:', fileId);
+      toast.error('Invalid source');
+      return;
+    }
+    
+    // Find the file
+    const file = knowledgebaseFiles.find(f => f.id === fileId);
+    
+    if (!file) {
+      console.error('File not found for source:', fileId);
+      toast.error('Source file not found');
+      return;
+    }
+    
+    console.log('Handling source click:', file.name);
+    
+    // Set the selected file and active tab
+    setSelectedFile(file);
+    setActiveTab('transcripts');
+    
+    // If it's a YouTube video, set up the player but don't set a timestamp
+    if (file.type.toLowerCase() === 'youtube') {
+      setIsYoutubeVideo(true);
+      
+      // Extract video ID from the source URL if available
+      if (file.source_url) {
+        const videoId = extractYoutubeVideoId(file.source_url);
+        if (videoId) {
+          setVideoId(videoId);
+          console.log('Set video ID:', videoId);
+        }
+      }
+      
+      // Ensure we have the chunked transcript for this file
+      if (chunkedTranscript.length === 0 && file.content_text) {
+        try {
+          // Parse the content text to get transcript segments
+          const segments = JSON.parse(file.content_text);
+          // Create chunks from the segments
+          const chunks = chunkTranscript(segments, chunkSize);
+          setChunkedTranscript(chunks);
+          console.log('Created chunked transcript:', chunks.length, 'chunks');
+        } catch (error) {
+          console.error('Error parsing transcript:', error);
+        }
+      }
+    }
+  };
+
+  return (
+    <TooltipProvider>
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar />
+        
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <Header 
+            title="Chat with AI" 
+            subtitle="Ask questions about your knowledge base" 
+          />
+          
+          <main className="flex-1 overflow-hidden flex flex-col md:flex-row">
+            {/* Left side: Chat interface */}
+            <div className="flex-1 flex flex-col overflow-hidden border-r">
+              {/* Knowledge Base Selector */}
+              <div className="border-b p-4 bg-white">
+                <div className="max-w-2xl mx-auto">
+                  {selectedKnowledgeBase && (
+                    <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+                      <div className="flex flex-col md:flex-row items-start md:items-center gap-2 md:gap-4 w-full md:w-auto">
+                        <h2 className="text-xl font-semibold whitespace-nowrap mb-2 md:mb-0">
+                          Chat with {selectedKnowledgeBase.title}
+                        </h2>
+                        <div className="w-full md:w-auto">
+                          <KnowledgeBaseSelector 
+                            onSelect={handleKnowledgeBaseSelect}
+                            initialKnowledgeBaseId={initialKnowledgeBaseId}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-2 w-full md:w-auto justify-start md:justify-end mt-2 md:mt-0">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleGenerateStudyNotes}
+                          disabled={isGeneratingNotes || messages.length < 3}
+                          className="whitespace-nowrap flex-1 md:flex-none"
+                        >
+                          <BookOpen className="h-4 w-4 mr-2" />
+                          {isGeneratingNotes ? 'Generating...' : 'Generate Notes'}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {!selectedKnowledgeBase && (
+                    <KnowledgeBaseSelector 
+                      onSelect={handleKnowledgeBaseSelect}
+                      initialKnowledgeBaseId={initialKnowledgeBaseId}
+                    />
+                  )}
+                </div>
+              </div>
+
+              {/* Chat Messages */}
+              <div className="flex-1 overflow-y-auto p-4 bg-gray-50 relative">
+                {selectedKnowledgeBase ? (
+                  <div className="max-w-2xl mx-auto space-y-4 pb-2">
+                    {messages.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                        <Bot className="h-12 w-12 text-gray-300 mb-4" />
+                        <h3 className="text-lg font-medium">No messages yet</h3>
+                        <p className="text-sm text-muted-foreground mt-1 max-w-xs">
+                          Start a conversation by typing a message below.
+                        </p>
+                      </div>
+                    ) : (
+                      messages.map((message, index) => renderMessage(message))
+                    )}
+                    <div ref={messagesEndRef} className="h-0 w-full" />
+                    
+                    {isProcessing && (
+                      <div className="flex justify-start">
+                        <div className="flex max-w-[80%] flex-row">
+                          <div className="flex-shrink-0 mr-3">
+                            <Bot className="h-8 w-8 rounded-full bg-sattva-100 p-1 text-sattva-600" />
+                          </div>
+                          <div className="rounded-lg bg-gray-100 p-4 text-gray-800">
+                            <div className="flex space-x-2">
+                              <div className="h-2 w-2 rounded-full bg-sattva-400 animate-bounce"></div>
+                              <div className="h-2 w-2 rounded-full bg-sattva-400 animate-bounce [animation-delay:0.2s]"></div>
+                              <div className="h-2 w-2 rounded-full bg-sattva-400 animate-bounce [animation-delay:0.4s]"></div>
+                            </div>
                           </div>
                         </div>
-                        {selectedFile.source_url && (
-                          <Button variant="ghost" size="icon" asChild className="h-8 w-8">
-                            <a href={selectedFile.source_url} target="_blank" rel="noopener noreferrer">
-                              <ExternalLink className="h-4 w-4" />
-                            </a>
-                          </Button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                    <FileText className="h-12 w-12 text-gray-300 mb-4" />
+                    <h3 className="text-lg font-medium">Select a Knowledge Base</h3>
+                    <p className="text-sm text-muted-foreground mt-1 max-w-xs">
+                      Choose a knowledge base from the dropdown above to start chatting.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Chat Input */}
+              <div className="border-t p-4 bg-white">
+                <div className="max-w-2xl mx-auto">
+                  <div className="flex items-end gap-2">
+                    <div className="flex-1 relative">
+                      <Textarea
+                        placeholder={selectedKnowledgeBase ? "Type your message here..." : "Select a knowledge base to start chatting..."}
+                        value={inputMessage}
+                        onChange={(e) => setInputMessage(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        className="pr-4 resize-none py-3 min-h-[56px]"
+                        disabled={!selectedKnowledgeBase}
+                      />
+                    </div>
+                    <Button 
+                      onClick={handleSendMessage} 
+                      disabled={!inputMessage.trim() || !selectedKnowledgeBase}
+                      className="bg-sattva-600 hover:bg-sattva-700 h-[56px] px-6"
+                    >
+                      <SendHorizonal className="h-5 w-5" />
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Right side: Transcripts and Files */}
+            <div className="w-[500px] flex flex-col bg-white">
+              <Tabs defaultValue="transcripts" className="flex-1 flex flex-col" value={activeTab} onValueChange={(value) => setActiveTab(value as 'transcripts' | 'files')}>
+                <div className="border-b px-4">
+                  <TabsList className="w-full justify-start">
+                    <TabsTrigger value="transcripts">Transcripts</TabsTrigger>
+                    <TabsTrigger value="files">Files</TabsTrigger>
+                  </TabsList>
+                </div>
+                
+                {/* Transcripts Tab */}
+                <TabsContent value="transcripts" className="flex-1 flex flex-col p-0 overflow-hidden">
+                  {selectedFile ? (
+                    <div className="flex flex-col h-full">
+                      {/* File Header */}
+                      <div className="p-4 border-b flex-shrink-0">
+                        <div className="flex justify-between items-start">
+                          <div>
+                            <h3 className="font-medium text-sm truncate">{selectedFile.name}</h3>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-xs px-2 py-0.5 bg-gray-100 rounded-full">
+                                {getFileTypeLabel(selectedFile.type)}
+                              </span>
+                              {selectedFile.metadata?.duration && (
+                                <span className="text-xs text-gray-500">
+                                  {formatDuration(selectedFile.metadata.duration)}
+                                </span>
+                              )}
+                              {selectedFile.metadata?.page_count && (
+                                <span className="text-xs text-gray-500">
+                                  {selectedFile.metadata.page_count} pages
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {selectedFile.source_url && (
+                            <Button variant="ghost" size="icon" asChild className="h-8 w-8">
+                              <a href={selectedFile.source_url} target="_blank" rel="noopener noreferrer">
+                                <ExternalLink className="h-4 w-4" />
+                              </a>
+                            </Button>
+                          )}
+                        </div>
+                        
+                        {/* YouTube specific controls */}
+                        {isYoutubeVideo && (
+                          <div className="mt-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs text-gray-500">Chunk Size:</span>
+                              <Select 
+                                value={chunkSize.toString()} 
+                                onValueChange={handleChunkSizeChange}
+                              >
+                                <SelectTrigger className="w-[120px] h-8 text-xs">
+                                  <SelectValue placeholder="Chunk Size" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="0">No grouping</SelectItem>
+                                  <SelectItem value="15">15 seconds</SelectItem>
+                                  <SelectItem value="30">30 seconds</SelectItem>
+                                  <SelectItem value="60">1 minute</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
                         )}
                       </div>
                       
-                      {/* YouTube specific controls */}
-                      {isYoutubeVideo && (
-                        <div className="mt-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs text-gray-500">Chunk Size:</span>
-                            <Select 
-                              value={chunkSize.toString()} 
-                              onValueChange={handleChunkSizeChange}
-                            >
-                              <SelectTrigger className="w-[120px] h-8 text-xs">
-                                <SelectValue placeholder="Chunk Size" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="15">15 seconds</SelectItem>
-                                <SelectItem value="30">30 seconds</SelectItem>
-                                <SelectItem value="60">1 minute</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
+                      {/* YouTube Player */}
+                      {isYoutubeVideo && videoId && (
+                        <div className="p-4 border-b">
+                          <YoutubePlayer 
+                            ref={youtubePlayerRef}
+                            videoId={videoId} 
+                            currentTime={currentTime}
+                            onSeek={setCurrentTime}
+                            height={240}
+                          />
                         </div>
                       )}
-                    </div>
-                    
-                    {/* YouTube Player */}
-                    {isYoutubeVideo && videoId && (
-                      <div className="p-4 border-b">
-                        <YoutubePlayer 
-                          videoId={videoId} 
-                          currentTime={currentTime}
-                          onSeek={setCurrentTime}
-                          height={240}
-                        />
-                      </div>
-                    )}
-                    
-                    {/* Content Area */}
-                    <div 
-                      className="overflow-y-auto flex-grow pb-24" 
-                      style={{ 
-                        maxHeight: isYoutubeVideo 
-                          ? 'calc(100vh - 450px)' 
-                          : 'calc(100vh - 250px)',
-                        minHeight: '300px'
-                      }}
-                    >
-                      {isYoutubeVideo && chunkedTranscript.length > 0 ? (
-                        <div className="p-4 space-y-2 pb-12">
-                          {chunkedTranscript.map((chunk, index) => (
-                            <div 
-                              key={`chunk-${index}`}
-                              id={`chunk-${chunk.startTime}`}
-                              className={`p-3 rounded-lg border cursor-pointer transition-colors hover:bg-gray-50 ${
-                                currentTime >= chunk.startTime && currentTime <= chunk.endTime 
-                                  ? 'bg-sattva-50 border-sattva-200' 
-                                  : ''
-                              }`}
-                              onClick={() => handleTranscriptChunkClick(chunk.startTime)}
-                            >
-                              <div className="flex items-start gap-2">
-                                <div className="flex-shrink-0 mt-1">
-                                  <Play className="h-3 w-3 text-gray-500" />
-                                </div>
-                                <div className="flex-1">
-                                  <div className="flex items-center justify-between mb-1">
-                                    <span className="text-xs font-medium text-gray-500">
-                                      {formatTime(chunk.startTime)} - {formatTime(chunk.endTime)}
-                                    </span>
+                      
+                      {/* Content Area */}
+                      <div 
+                        className="overflow-y-auto flex-grow pb-24" 
+                        style={{ 
+                          maxHeight: isYoutubeVideo 
+                            ? 'calc(100vh - 450px)' 
+                            : 'calc(100vh - 250px)',
+                          minHeight: '300px'
+                        }}
+                      >
+                        {isYoutubeVideo && chunkedTranscript.length > 0 ? (
+                          <div className="p-4 space-y-2 pb-12">
+                            {chunkedTranscript.map((chunk, index) => {
+                              const isCurrentChunk = currentTime >= chunk.startTime && currentTime <= chunk.endTime;
+                              return (
+                                <div 
+                                  key={`chunk-${index}`}
+                                  id={`chunk-${chunk.startTime}`}
+                                  className={`p-3 rounded-lg border cursor-pointer transition-all duration-300 hover:bg-gray-50 ${
+                                    isCurrentChunk 
+                                      ? 'bg-sattva-50 border-sattva-200' 
+                                      : 'border-gray-200'
+                                  }`}
+                                  onClick={() => handleTranscriptChunkClick(chunk.startTime)}
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <div className="flex-shrink-0 mt-1">
+                                      <Play className={`h-3 w-3 ${isCurrentChunk ? 'text-sattva-600' : 'text-gray-500'}`} />
+                                    </div>
+                                    <div className="flex-1">
+                                      <div className="flex items-center justify-between mb-1">
+                                        <span className={`text-xs font-medium ${isCurrentChunk ? 'text-sattva-600' : 'text-gray-500'}`}>
+                                          {formatTime(chunk.startTime)} - {formatTime(chunk.endTime)}
+                                        </span>
+                                      </div>
+                                      <p className="text-sm">{chunk.text}</p>
+                                    </div>
                                   </div>
-                                  <p className="text-sm">{chunk.text}</p>
                                 </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <div className="p-4 pb-16">
-                          {selectedFile?.content_text ? (
-                            <pre className="whitespace-pre-wrap font-sans text-sm min-h-[200px]">
-                              {selectedFile.content_text}
-                            </pre>
-                          ) : (
-                            <div className="text-left py-8">
-                              <p className="text-muted-foreground">
-                                No content available for this file.
-                              </p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex-1 flex items-start justify-start p-8">
-                    <div>
-                      <FileText className="h-12 w-12 text-gray-300 mb-4" />
-                      <h3 className="text-lg font-medium">No file selected</h3>
-                      <p className="text-sm text-muted-foreground mt-1 max-w-xs">
-                        Select a file from the Files tab or click on a reference in the chat to view its content.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </TabsContent>
-              
-              {/* Files Tab */}
-              <TabsContent value="files" className="flex-1 p-0">
-                <div className="overflow-y-auto h-full" style={{ maxHeight: 'calc(100vh - 150px)' }}>
-                  <div className="p-4 space-y-2">
-                    {knowledgebaseFiles.length > 0 ? (
-                      knowledgebaseFiles.map((file) => (
-                        <div 
-                          key={file.id}
-                          className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                            selectedFile?.id === file.id 
-                              ? 'bg-sattva-50 border-sattva-200' 
-                              : 'hover:bg-gray-50'
-                          }`}
-                          onClick={() => handleFileSelect(file)}
-                        >
-                          <div className="flex items-start gap-3">
-                            <div className="h-10 w-10 rounded bg-gray-100 flex items-center justify-center">
-                              <FileText className="h-5 w-5 text-gray-500" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h4 className="font-medium text-sm truncate">{file.name}</h4>
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className="text-xs px-2 py-0.5 bg-gray-100 rounded-full">
-                                  {getFileTypeLabel(file.type)}
-                                </span>
-                                <span className="text-xs text-gray-500">
-                                  {formatDate(file.created_at)}
-                                </span>
-                              </div>
-                            </div>
+                              );
+                            })}
                           </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-left py-8">
-                        <p className="text-muted-foreground">
-                          {selectedKnowledgeBase 
-                            ? 'No files found in this knowledge base.' 
-                            : 'Select a knowledge base to see files.'}
+                        ) : (
+                          <div className="p-4 pb-16">
+                            {selectedFile?.content_text ? (
+                              <pre className="whitespace-pre-wrap font-sans text-sm min-h-[200px]">
+                                {selectedFile.content_text}
+                              </pre>
+                            ) : (
+                              <div className="text-left py-8">
+                                <p className="text-muted-foreground">
+                                  No content available for this file.
+                                </p>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex-1 flex items-start justify-start p-8">
+                      <div>
+                        <FileText className="h-12 w-12 text-gray-300 mb-4" />
+                        <h3 className="text-lg font-medium">No file selected</h3>
+                        <p className="text-sm text-muted-foreground mt-1 max-w-xs">
+                          Select a file from the Files tab or click on a reference in the chat to view its content.
                         </p>
                       </div>
-                    )}
+                    </div>
+                  )}
+                </TabsContent>
+                
+                {/* Files Tab */}
+                <TabsContent value="files" className="flex-1 p-0">
+                  <div className="overflow-y-auto h-full" style={{ maxHeight: 'calc(100vh - 150px)' }}>
+                    <div className="p-4 space-y-2">
+                      {knowledgebaseFiles.length > 0 ? (
+                        knowledgebaseFiles.map((file) => (
+                          <div 
+                            key={file.id}
+                            className={`p-3 rounded-lg border cursor-pointer transition-colors ${
+                              selectedFile?.id === file.id 
+                                ? 'bg-sattva-50 border-sattva-200' 
+                                : 'hover:bg-gray-50'
+                            }`}
+                            onClick={() => handleFileSelect(file)}
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="h-10 w-10 rounded bg-gray-100 flex items-center justify-center">
+                                <FileText className="h-5 w-5 text-gray-500" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-medium text-sm truncate">{file.name}</h4>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <span className="text-xs px-2 py-0.5 bg-gray-100 rounded-full">
+                                    {getFileTypeLabel(file.type)}
+                                  </span>
+                                  <span className="text-xs text-gray-500">
+                                    {formatDate(file.created_at)}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="text-left py-8">
+                          <p className="text-muted-foreground">
+                            {selectedKnowledgeBase 
+                              ? 'No files found in this knowledge base.' 
+                              : 'Select a knowledge base to see files.'}
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </TabsContent>
-            </Tabs>
-          </div>
-        </main>
+                </TabsContent>
+              </Tabs>
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
+    </TooltipProvider>
   );
 };
 

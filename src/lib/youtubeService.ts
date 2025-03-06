@@ -92,6 +92,16 @@ export function chunkTranscript(
   transcript: TranscriptSegment[], 
   chunkSize: number = 30 // Default chunk size is 30 seconds
 ): ChunkedTranscript[] {
+  // Special case: if chunkSize is 0, return each segment as its own chunk (no grouping)
+  if (chunkSize === 0) {
+    return transcript.map(segment => ({
+      text: segment.text,
+      startTime: segment.start,
+      endTime: segment.start + segment.duration,
+      segments: [segment]
+    }));
+  }
+  
   if (!transcript || transcript.length === 0) {
     return [];
   }

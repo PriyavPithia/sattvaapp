@@ -35,3 +35,11 @@ Chat features: (Use open AI API, chat gpt 3.5 turbo, to answer the questions.)
     - user messages and AI responses should be saved in the database and shown in a chat interface.
     - On mount chat should autoscroll to bottom
     - There should be a section to Generate Study Notes from the chat history.
+
+
+Referencing system:
+    - The response from AI should have inline references of the context used.
+    - The reference should be for all file types.
+    - When user clicks on AI response reference, on the transcription section it should take user to that file view and highlight the exact text referenced.
+    - For youtube referencing, on the transcription section the video player should play from the timestamp the context was referenced. and on the timestamp chunks it should automatically scroll to the refrenced time chunk and highlight it.
+

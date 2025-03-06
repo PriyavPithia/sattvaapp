@@ -1,7 +1,12 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/lib/AuthContext";
+import { cn } from "@/lib/utils";
 
-export function UserAvatar() {
+interface UserAvatarProps {
+  className?: string;
+}
+
+export function UserAvatar({ className }: UserAvatarProps) {
   const { user } = useAuth();
   
   // Get user initials for avatar fallback
@@ -18,7 +23,7 @@ export function UserAvatar() {
   };
 
   return (
-    <Avatar className="h-9 w-9 border">
+    <Avatar className={cn("h-9 w-9 border", className)}>
       <AvatarImage src={user?.user_metadata?.avatar_url} alt={user?.user_metadata?.full_name || 'User'} />
       <AvatarFallback className="bg-sattva-100 text-sattva-800">{getUserInitials()}</AvatarFallback>
     </Avatar>

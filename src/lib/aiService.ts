@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { knowledgebaseService } from './knowledgebaseService';
+import { formatTime } from './youtubeService';
 
 interface Reference {
   fileId: string;
@@ -44,12 +45,56 @@ export const aiService = {
       }
       
       // 2. Prepare context from the relevant files
-      const context = relevantFiles.map(file => {
+      const context = relevantFiles.map((file, index) => {
+        // Store the exact chunk that was found during semantic search
+        const exactChunk = file.content_text || "";
+        
+        // Store the chunk metadata if available
+        const chunkMetadata = file.metadata || {};
+        
+        // For media files, try to extract timestamp information
+        let processedContent = exactChunk;
+        let timestampData = [];
+        
+        if (['youtube', 'audio', 'video', 'mp3', 'mpeg'].includes(file.type?.toLowerCase()) || 
+            (file.name && (
+              file.name.toLowerCase().endsWith('.mp3') ||
+              file.name.toLowerCase().endsWith('.wav') ||
+              file.name.toLowerCase().endsWith('.ogg') ||
+              file.name.toLowerCase().endsWith('.m4a')
+            ))) {
+          try {
+            // If the content is JSON (like YouTube transcripts), preserve the timestamp information
+            const contentData = JSON.parse(file.content_text);
+            if (Array.isArray(contentData) && contentData.length > 0 && contentData[0].start !== undefined) {
+              // Store timestamp data for reference
+              timestampData = contentData.map(segment => ({
+                timestamp: segment.start,
+                text: segment.text,
+                formattedTime: formatTime(segment.start)
+              }));
+              
+              // Format the content to include timestamps explicitly in the text
+              processedContent = contentData.map(segment => 
+                `[TIMESTAMP:${segment.start}] ${segment.text}`
+              ).join('\n');
+              
+              console.log(`Extracted ${timestampData.length} timestamps from ${file.type} file`);
+            }
+          } catch (e) {
+            // If parsing fails, use the original content
+            console.log(`Could not parse content for ${file.type} file, using original content`);
+          }
+        }
+        
         return {
-          content: file.content_text || "",
+          content: processedContent,
           fileId: file.id,
           fileName: file.name,
-          fileType: file.type.toLowerCase()
+          fileType: file.type.toLowerCase(),
+          chunkMetadata,
+          docIndex: index + 1, // Add document index for citation
+          timestampData // Include timestamp data
         };
       });
       
@@ -82,58 +127,23 @@ export const aiService = {
         - Avoid academic or overly formal tone
         - Explain concepts simply
         - Give practical examples when relevant
+        
+        CITATION FORMAT (CRITICAL - YOU MUST FOLLOW EXACTLY):
+        - For EVERY statement based on the context, include a citation in the format ((DOC_INDEX:TIMESTAMP)) immediately after the statement
+        - DOC_INDEX is the document number (1, 2, 3, etc.) as listed in the context
+        - For media files (YouTube, audio, video), TIMESTAMP is REQUIRED and should be the exact timestamp in seconds from the context
+        - For YouTube videos, use the exact timestamp from the JSON timestamp data provided in the context
+        - For non-media files, omit the timestamp part and just use ((DOC_INDEX))
+        - Place citations immediately after the relevant statement, not at the end of paragraphs
+        - Make sure EVERY factual statement has a citation
+        - Do NOT include any other citation format
 
-        CITATION RULES (MANDATORY):
-        - Every statement must have a reference
-        - Place references immediately after each statement
-        - You can use two reference formats:
-          1. Specific reference: {{ref:fileId:position}} where fileId is the ID of the file and position is the character position
-          2. Simple reference: {{ref}} which will automatically reference the next document in order
-        - For YouTube videos or audio files, use the timestamp in seconds as the position
-        - Never group references
-        - Never leave statements unreferenced
+        EXAMPLES OF PROPER CITATIONS:
+        - "The mitochondria is the powerhouse of the cell ((1))."
+        - "At 2:45 in the lecture, the professor explains quantum entanglement ((3:165))."
+        - "According to the research paper, climate change has accelerated ((2))."
         
-        EXAMPLE OF PROPERLY FORMATTED RESPONSE WITH REFERENCES:
-        
-        # How to Screen Record on a Laptop
-        
-        Screen recording on a laptop involves using built-in tools to capture video of your screen activities. {{ref:fileId:120}} This feature is available on most modern operating systems including Windows, macOS, and Linux. {{ref}}
-        
-        ## Required Tools
-        
-        Before you begin, ensure you have the following: {{ref}}
-        
-        - A laptop with updated operating system {{ref}}
-        - Sufficient storage space (at least 1GB free) {{ref}}
-        - Optional: external microphone for better audio quality {{ref}}
-        
-        ## Steps to Record Your Screen
-        
-        Follow these steps in sequence to create a screen recording: {{ref}}
-        
-        1. Press **Windows key + Shift + R** to open the screen recording tool. {{ref}}
-        2. Select the area of the screen you want to record. {{ref}}
-        3. Choose audio settings if you want to include sound. {{ref}}
-        4. Click the **Start** button to begin recording after a 3-second countdown. {{ref:fileId:210}}
-        5. When finished, click the **Stop** button to end the recording. {{ref}}
-        
-        > **Note**: For longer recordings, ensure your laptop is connected to a power source to prevent battery drain. {{ref}}
-        
-        ## Editing Your Recording
-        
-        The recorded video can be edited using **Clipchamp**, which allows you to trim unwanted sections. {{ref}} You can save the final video as an MP4 file for sharing or future reference. {{ref:fileId:350}}
-        
-        ## Troubleshooting Common Issues
-        
-        If you encounter problems with your screen recording: {{ref}}
-        
-        - **Laggy playback**: Reduce the recording resolution or close background applications {{ref}}
-        - **No audio**: Check that the correct microphone is selected in the settings {{ref}}
-        - **Large file size**: Use video compression software after recording {{ref}}
-        
-        ## Summary
-        
-        Screen recording is a straightforward process that requires minimal setup on most laptops. {{ref}} By following the steps outlined above, you can create high-quality screen recordings for tutorials, presentations, or troubleshooting. {{ref}}
+        IMPORTANT: For YouTube videos, you MUST include the timestamp in seconds in your citations. For example, if you're referencing content at 2 minutes and 30 seconds (150 seconds), use ((DOC_INDEX:150)). The exact timestamps are provided in the TIMESTAMP DATA section for each document.
       `;
       
       // 4. Call the OpenAI API
@@ -171,25 +181,41 @@ export const aiService = {
               role: 'user', 
               content: `
                 Context:
-                ${truncatedContext.map((ctx, index) => `
-                  --- Document ${index + 1} (ID: ${ctx.fileId}, Type: ${ctx.fileType}) ---
+                ${truncatedContext.map((ctx) => `
+                  --- Document ${ctx.docIndex} (ID: ${ctx.fileId}, Type: ${ctx.fileType}, Name: ${ctx.fileName}) ---
                   ${ctx.content}
+                  
+                  ${ctx.timestampData && ctx.timestampData.length > 0 ? 
+                    `TIMESTAMP DATA FOR DOCUMENT ${ctx.docIndex} (IMPORTANT - USE THESE EXACT TIMESTAMPS):
+                    ${JSON.stringify(ctx.timestampData.slice(0, 10).map(td => ({
+                      timestamp: td.timestamp,
+                      text: td.text.substring(0, 50) + (td.text.length > 50 ? '...' : ''),
+                      formattedTime: td.formattedTime
+                    })), null, 2)}
+                    ... (${ctx.timestampData.length} total timestamps)` 
+                    : ''}
                 `).join('\n\n')}
+                
+                Document to File Mapping:
+                ${truncatedContext.map(ctx => `Document ${ctx.docIndex} = ${ctx.fileName} (${ctx.fileId})`).join('\n')}
                 
                 Question: ${query}
                 
-                IMPORTANT: 
-                1. Make sure to include references for EVERY statement using either:
-                   - The specific format {{ref:fileId:position}} where fileId is the document ID and position is the character position or timestamp.
-                   - The simple format {{ref}} which will automatically reference the next document in order.
-                2. ALWAYS follow the required response format with proper headings, subheadings, and formatting.
-                3. Start with a clear # heading and organize your answer with ## subheadings.
-                4. Use bullet points, numbered lists, bold text, and other markdown formatting as appropriate.
+                IMPORTANT REMINDER: 
+                1. Use the citation format ((DOC_INDEX:TIMESTAMP)) for every statement
+                2. DOC_INDEX is the document number (1, 2, 3, etc.)
+                3. For YouTube videos and other media, you MUST include the TIMESTAMP in seconds
+                4. Use the exact timestamps from the TIMESTAMP DATA provided for each document
+                5. Place citations immediately after each statement
+                6. Make sure EVERY factual statement has a citation
+                7. Format your response with proper markdown headings, lists, and formatting
               `
             }
           ],
-          temperature: 0.7,
-          max_tokens: 1000
+          temperature: 0.5, // Lower temperature for more consistent responses
+          max_tokens: 800, // Reduced max tokens for faster responses
+          presence_penalty: 0.1, // Slight penalty to avoid repetition
+          frequency_penalty: 0.1 // Slight penalty to avoid repetition
         },
         {
           headers: {
@@ -201,6 +227,8 @@ export const aiService = {
       
       // 5. Extract the AI response
       const aiResponseText = response.data.choices[0].message.content;
+      
+      console.log('AI response text sample:', aiResponseText.substring(0, 200) + (aiResponseText.length > 200 ? '...' : ''));
       
       // Clean up any potential code block formatting issues
       let cleanedResponseText = aiResponseText;
@@ -220,80 +248,342 @@ export const aiService = {
       
       // 6. Extract references from the response
       const references: Reference[] = [];
-      // Update regex to handle both formats: {{ref:fileId:position}} and {{ref}}
-      const referenceRegex = /\{\{ref(:[a-zA-Z0-9-]+:(\d+))?\}\}/g;
-      let match;
       let referenceIds = new Set<string>();
-      let autoRefIndex = 0;
       
-      while ((match = referenceRegex.exec(cleanedResponseText)) !== null) {
-        // Check if this is the new format ({{ref}}) or the old format ({{ref:fileId:position}})
-        if (!match[1]) {
-          // New format: {{ref}} - assign references sequentially from context
-          if (autoRefIndex < context.length) {
-            const file = context[autoRefIndex];
-            const fileId = file.fileId;
-            // For auto-references, use position 0 as default
-            const position = 0;
-            
-            // Create a unique ID for this reference
-            const refId = `${fileId}:${position}:auto${autoRefIndex}`;
+      // Look for a Sources section at the end of the response
+      const sourcesMatch = cleanedResponseText.match(/## Sources|# Sources|Sources:/i);
+      
+      if (sourcesMatch) {
+        const sourcesSection = cleanedResponseText.substring(sourcesMatch.index!);
+        const bulletPointRegex = /[-*]\s+([^:\n]+)(?::|$)/g;
+        let bulletMatch;
+        
+        while ((bulletMatch = bulletPointRegex.exec(sourcesSection)) !== null) {
+          const filename = bulletMatch[1].trim();
+          
+          // Find the file by name
+          const file = truncatedContext.find(ctx => 
+            ctx.fileName.toLowerCase() === filename.toLowerCase()
+          );
+          
+          // If not found by exact name, try partial match
+          const fileByPartialName = !file ? truncatedContext.find(ctx => 
+            ctx.fileName.toLowerCase().includes(filename.toLowerCase()) || 
+            filename.toLowerCase().includes(ctx.fileName.toLowerCase())
+          ) : null;
+          
+          if (file || fileByPartialName) {
+            const actualFile = file || fileByPartialName!;
+            const fileId = actualFile.fileId;
             
             // Skip if we've already processed this reference
-            if (referenceIds.has(refId)) continue;
-            referenceIds.add(refId);
+            if (referenceIds.has(fileId)) continue;
+            referenceIds.add(fileId);
             
-            // Extract a snippet from the beginning of the content
-            const snippet = file.content.substring(0, Math.min(file.content.length, 200));
+            // Extract a snippet from the content
+            const referenceCount = Array.from(references).filter(ref => ref.fileId === fileId).length;
+            const contentLength = actualFile.content.length;
             
-            // Check if this is a YouTube or audio file
-            const isMediaFile = ['youtube', 'audio', 'video'].includes(file.fileType);
+            let start = 0;
+            let end = Math.min(contentLength, 200);
+            
+            if (referenceCount > 0) {
+              // For subsequent references, use different parts of the content
+              const segmentSize = Math.min(200, Math.floor(contentLength / 5));
+              start = Math.min(referenceCount * segmentSize, contentLength - segmentSize);
+              end = Math.min(start + segmentSize, contentLength);
+            }
+            
+            const textSnippet = actualFile.content.substring(start, end);
+            
+            // Determine position for media files
+            let position: number | undefined = undefined;
+            
+            // For media files, try to extract a timestamp from the content
+            if (['youtube', 'audio', 'video', 'mp3', 'mpeg'].includes(actualFile.fileType?.toLowerCase()) || 
+                (actualFile.fileName && (
+                  actualFile.fileName.toLowerCase().endsWith('.mp3') ||
+                  actualFile.fileName.toLowerCase().endsWith('.wav') ||
+                  actualFile.fileName.toLowerCase().endsWith('.ogg') ||
+                  actualFile.fileName.toLowerCase().endsWith('.m4a')
+                ))) {
+              try {
+                // Try to parse the content as JSON (for YouTube transcripts)
+                const contentData = JSON.parse(actualFile.content);
+                
+                // If it's an array of transcript segments, use the start time of a random segment
+                if (Array.isArray(contentData) && contentData.length > 0 && contentData[0].start !== undefined) {
+                  // Get a random segment from the first half of the transcript
+                  const randomIndex = Math.floor(Math.random() * Math.min(contentData.length, 10));
+                  position = contentData[randomIndex].start;
+                  console.log(`Found timestamp ${position} for ${actualFile.fileType} file`);
+                }
+              } catch (e) {
+                // If parsing fails, use a default position
+                console.log(`Could not parse content for ${actualFile.fileType} file, using default position`);
+                position = 0;
+              }
+            }
             
             references.push({
               fileId,
-              text: snippet,
-              position: isMediaFile ? position : undefined
-            });
-            
-            autoRefIndex++;
-          }
-        } else {
-          // Old format: {{ref:fileId:position}}
-          const fileId = match[1].split(':')[1];
-          const position = parseInt(match[2]);
-          
-          // Find the file in the context
-          const file = context.find(ctx => ctx.fileId === fileId);
-          
-          if (file) {
-            // Create a unique ID for this reference to avoid duplicates
-            const refId = `${fileId}:${position}`;
-            
-            // Skip if we've already processed this reference
-            if (referenceIds.has(refId)) continue;
-            referenceIds.add(refId);
-            
-            // Extract a snippet of text around the position
-            const start = Math.max(0, position - 100);
-            const end = Math.min(file.content.length, position + 100);
-            const snippet = file.content.substring(start, end);
-            
-            // Check if this is a YouTube or audio file to handle position as timestamp
-            const isMediaFile = ['youtube', 'audio', 'video'].includes(file.fileType);
-            
-            references.push({
-              fileId,
-              text: snippet,
-              position: isMediaFile ? position : undefined
+              text: textSnippet,
+              position
             });
           }
         }
       }
       
-      // Add all references to the result
-      autoRefIndex = 0;
+      // Extract inline references using the new citation format
+      const inlineCiteRegex = /\(\((\d+)(?::([a-zA-Z0-9\-]+))?\)\)/g;
+      let inlineMatch;
       
-      // Return the original text with the reference markers intact
+      console.log('Looking for citations in response using pattern ((DOC_INDEX:ID_OR_TIMESTAMP))');
+      console.log('Response sample:', cleanedResponseText.substring(0, 300) + (cleanedResponseText.length > 300 ? '...' : ''));
+      
+      // Test the citation pattern with a sample response
+      const testResponse = "This is a test ((1:123.45)) with a citation and ((2:6877d069-ea10-4e47-a928-5f0ffbe92b5a)) with an ID.";
+      const testMatches = [];
+      let testMatch;
+      
+      // Reset regex state
+      inlineCiteRegex.lastIndex = 0;
+      
+      // Find all citation matches in the test response
+      while ((testMatch = inlineCiteRegex.exec(testResponse)) !== null) {
+        testMatches.push({
+          match: testMatch[0],
+          docIndex: testMatch[1],
+          timestamp: testMatch[2],
+          index: testMatch.index
+        });
+      }
+      
+      console.log('Citation pattern test results:', testMatches);
+      
+      // Reset regex state
+      inlineCiteRegex.lastIndex = 0;
+      
+      // Create a map to track unique references by fileId and timestamp
+      const uniqueReferences = new Map<string, Reference>();
+      
+      while ((inlineMatch = inlineCiteRegex.exec(cleanedResponseText)) !== null) {
+        const docIndex = parseInt(inlineMatch[1], 10);
+        const idOrTimestamp = inlineMatch[2] ? inlineMatch[2] : undefined;
+        
+        console.log(`Found citation: ((${docIndex}${idOrTimestamp !== undefined ? ':' + idOrTimestamp : ''}))`);
+        
+        // Check if the second part is a fileId (UUID format)
+        const isFileId = idOrTimestamp && /^[a-f0-9\-]{36}$/i.test(idOrTimestamp);
+        
+        if (isFileId) {
+          // Use the fileId directly
+          const fileId = idOrTimestamp;
+          console.log(`Using direct fileId: ${fileId}`);
+          
+          // Find the file in the knowledgebase files
+          const actualFile = truncatedContext.find(ctx => ctx.fileId === fileId);
+          
+          if (actualFile) {
+            console.log(`Found file for fileId ${fileId}:`, actualFile.fileName, actualFile.fileType);
+            
+            // Create a unique key for this reference based on fileId
+            const refKey = `${fileId}:direct`;
+            
+            // Skip if we've already processed this exact reference
+            if (uniqueReferences.has(refKey)) {
+              console.log(`Skipping duplicate reference for file ${actualFile.fileName}`);
+              continue;
+            }
+            
+            // Use the exact chunk that was found during semantic search
+            let textSnippet = actualFile.content;
+            
+            // Extract a snippet from the content - use different snippets for each reference
+            // For the first reference to this file, use the beginning
+            // For subsequent references, use different parts of the content
+            const referenceCount = Array.from(uniqueReferences.values())
+              .filter(ref => ref.fileId === fileId).length;
+            const contentLength = actualFile.content.length;
+            
+            let start = 0;
+            let end = Math.min(contentLength, 200);
+            
+            if (referenceCount > 0) {
+              // For subsequent references, use different parts of the content
+              const segmentSize = Math.min(200, Math.floor(contentLength / 5));
+              start = Math.min(referenceCount * segmentSize, contentLength - segmentSize);
+              end = Math.min(start + segmentSize, contentLength);
+            }
+            
+            textSnippet = actualFile.content.substring(start, end);
+            
+            console.log(`Adding reference: fileId=${fileId}`);
+            
+            // Add the reference to our map of unique references
+            uniqueReferences.set(refKey, {
+              fileId,
+              text: textSnippet,
+              position: undefined
+            });
+          } else {
+            console.log(`No file found for fileId ${fileId}`);
+          }
+        } else {
+          // Find the file by document index
+          const file = truncatedContext.find(ctx => ctx.docIndex === docIndex);
+          
+          if (file) {
+            console.log(`Found file for docIndex ${docIndex}:`, file.fileName, file.fileType);
+            
+            const fileId = file.fileId;
+            
+            // Create a unique key for this reference based on fileId and timestamp
+            const refKey = `${fileId}:${idOrTimestamp !== undefined ? idOrTimestamp : 'null'}`;
+            
+            // Skip if we've already processed this exact reference
+            if (uniqueReferences.has(refKey)) {
+              console.log(`Skipping duplicate reference for file ${file.fileName} with timestamp ${idOrTimestamp}`);
+              continue;
+            }
+            
+            // Use the exact chunk that was found during semantic search
+            let textSnippet = file.content;
+            let finalTimestamp = undefined;
+            
+            // Try to parse the timestamp if it's a number
+            if (idOrTimestamp && !isNaN(parseFloat(idOrTimestamp))) {
+              finalTimestamp = parseFloat(idOrTimestamp);
+            }
+            
+            // For media files, ensure we have a timestamp
+            if (['youtube', 'audio', 'video', 'mp3', 'mpeg'].includes(file.fileType?.toLowerCase()) || 
+                (file.fileName && (
+                  file.fileName.toLowerCase().endsWith('.mp3') ||
+                  file.fileName.toLowerCase().endsWith('.wav') ||
+                  file.fileName.toLowerCase().endsWith('.ogg') ||
+                  file.fileName.toLowerCase().endsWith('.m4a')
+                ))) {
+              // If no timestamp was provided in the citation, try to extract one from the content
+              if (finalTimestamp === undefined) {
+                try {
+                  // Try to parse the content as JSON (for YouTube transcripts)
+                  const contentData = JSON.parse(file.content);
+                  
+                  // If it's an array of transcript segments, use a timestamp from the content
+                  if (Array.isArray(contentData) && contentData.length > 0 && contentData[0].start !== undefined) {
+                    // Use the middle of the transcript as a default timestamp
+                    const middleIndex = Math.floor(contentData.length / 2);
+                    finalTimestamp = contentData[middleIndex].start;
+                    console.log(`No timestamp provided in citation ((${docIndex})), using middle of transcript: ${finalTimestamp}s`);
+                  }
+                } catch (e) {
+                  // If parsing fails, use 0 as default
+                  finalTimestamp = 0;
+                  console.log(`Could not parse content for citation ((${docIndex})), set default timestamp to 0s:`, e);
+                }
+              }
+              
+              // Try to find the specific segment for the timestamp
+              if (finalTimestamp !== undefined) {
+                try {
+                  // Try to parse the content as JSON (for YouTube transcripts)
+                  const contentData = JSON.parse(file.content);
+                  
+                  // If it's an array of transcript segments, find the segment closest to the timestamp
+                  if (Array.isArray(contentData) && contentData.length > 0 && contentData[0].start !== undefined) {
+                    const closestSegment = contentData.reduce((prev, curr) => {
+                      return Math.abs(curr.start - finalTimestamp!) < Math.abs(prev.start - finalTimestamp!) ? curr : prev;
+                    });
+                    
+                    console.log(`Found closest segment for citation ((${docIndex}:${finalTimestamp})) at ${closestSegment.start}s:`, closestSegment.text);
+                    textSnippet = closestSegment.text;
+                    
+                    // Update the timestamp to the exact start time of the segment
+                    finalTimestamp = closestSegment.start;
+                  }
+                } catch (e) {
+                  // If parsing fails, use a default snippet
+                  console.log(`Could not parse content for ${file.fileType} file, using default snippet:`, e);
+                  
+                  // Extract a snippet from the content - use different snippets for each reference
+                  // For the first reference to this file, use the beginning
+                  // For subsequent references, use different parts of the content
+                  const referenceCount = Array.from(uniqueReferences.values())
+                    .filter(ref => ref.fileId === fileId).length;
+                  const contentLength = file.content.length;
+                  
+                  let start = 0;
+                  let end = Math.min(contentLength, 200);
+                  
+                  if (referenceCount > 0) {
+                    // For subsequent references, use different parts of the content
+                    const segmentSize = Math.min(200, Math.floor(contentLength / 5));
+                    start = Math.min(referenceCount * segmentSize, contentLength - segmentSize);
+                    end = Math.min(start + segmentSize, contentLength);
+                  }
+                  
+                  textSnippet = file.content.substring(start, end);
+                }
+              }
+            } else {
+              // For non-media files, extract different snippets for each reference
+              const referenceCount = Array.from(uniqueReferences.values())
+                .filter(ref => ref.fileId === fileId).length;
+              const contentLength = file.content.length;
+              
+              let start = 0;
+              let end = Math.min(contentLength, 200);
+              
+              if (referenceCount > 0) {
+                // For subsequent references, use different parts of the content
+                const segmentSize = Math.min(200, Math.floor(contentLength / 5));
+                start = Math.min(referenceCount * segmentSize, contentLength - segmentSize);
+                end = Math.min(start + segmentSize, contentLength);
+              }
+              
+              textSnippet = file.content.substring(start, end);
+            }
+            
+            console.log(`Adding reference: fileId=${fileId}, position=${finalTimestamp}`);
+            
+            // Add the reference to our map of unique references
+            uniqueReferences.set(refKey, {
+              fileId,
+              text: textSnippet,
+              position: finalTimestamp
+            });
+          } else {
+            console.log(`No file found for docIndex ${docIndex}`);
+          }
+        }
+      }
+      
+      // Convert the map values to an array
+      const extractedReferences = Array.from(uniqueReferences.values());
+      
+      // Add the extracted references to our references array
+      references.push(...extractedReferences);
+      
+      // Remove the Sources section from the response text
+      if (sourcesMatch) {
+        cleanedResponseText = cleanedResponseText.substring(0, sourcesMatch.index!).trim();
+      }
+      
+      // 7. Return the AI response with references
+      console.log(`Returning AI response with ${references.length} references`);
+      
+      // Log the references for debugging
+      if (references.length > 0) {
+        console.log('References:', references.map(ref => ({
+          fileId: ref.fileId,
+          position: ref.position,
+          textSnippet: ref.text.substring(0, 50) + (ref.text.length > 50 ? '...' : '')
+        })));
+      } else {
+        console.log('No references found in the response');
+      }
+      
       return {
         text: cleanedResponseText,
         references,

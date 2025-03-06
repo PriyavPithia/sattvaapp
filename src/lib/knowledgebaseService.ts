@@ -600,51 +600,86 @@ export const knowledgebaseService = {
   
   // Process a single file for semantic search
   async processFileForSearch(file: FileRecord, queryEmbedding: number[]): Promise<{file: FileRecord, score: number}> {
-    // Skip files with no content
-    if (!file.content_text) return { file, score: 0 };
-    
-    // For longer texts, we'll split into chunks using recursive character splitting
-    const chunks = this.recursiveCharacterTextSplitter(file.content_text, 1000, 200);
-    
-    // Get the best score across all chunks
-    let bestScore = 0;
-    let processedChunks = 0;
-    
-    // Only process a limited number of chunks per file to improve performance
-    const maxChunksToProcess = 10;
-    const chunksToProcess = chunks.slice(0, maxChunksToProcess);
-    
-    for (const chunk of chunksToProcess) {
-      try {
-        // Check if we already have this chunk's embedding in cache
-        const chunkKey = `chunk:${file.id}:${chunk.substring(0, 50)}`;
-        let chunkEmbedding = this.embeddingCache.get(chunkKey);
+    try {
+      // Skip files with no content
+      if (!file.content_text || file.content_text.length === 0) {
+        return { file, score: 0 };
+      }
+      
+      // For small content, just compare directly
+      if (file.content_text.length < 1000) {
+        const fileKey = `file:${file.id}`;
+        let fileEmbedding = this.embeddingCache.get(fileKey);
         
-        if (!chunkEmbedding) {
-          chunkEmbedding = await this.getEmbedding(chunk);
-          if (chunkEmbedding) {
-            this.embeddingCache.set(chunkKey, chunkEmbedding);
+        if (!fileEmbedding) {
+          fileEmbedding = await this.getEmbedding(file.content_text);
+          if (fileEmbedding) {
+            this.embeddingCache.set(fileKey, fileEmbedding);
           }
         }
         
-        if (!chunkEmbedding) continue;
+        if (!fileEmbedding) return { file, score: 0 };
         
-        // Calculate cosine similarity
-        const similarity = this.cosineSimilarity(queryEmbedding, chunkEmbedding);
-        bestScore = Math.max(bestScore, similarity);
-        
-        processedChunks++;
-        
-        // Early exit if we found a very good match
-        if (bestScore > 0.85) break;
-      } catch (e) {
-        console.error('Error processing chunk for file', file.id, e);
-        continue;
+        const similarity = this.cosineSimilarity(queryEmbedding, fileEmbedding);
+        return { file, score: similarity };
       }
+      
+      // For larger content, split into chunks and find the best match
+      const chunks = this.recursiveCharacterTextSplitter(file.content_text, 1000, 200);
+      let bestScore = 0;
+      let bestChunk = '';
+      let bestChunkIndex = 0;
+      
+      // Process chunks in batches to avoid rate limits
+      const batchSize = 3;
+      for (let i = 0; i < chunks.length; i += batchSize) {
+        const batch = chunks.slice(i, Math.min(i + batchSize, chunks.length));
+        const batchResults = await Promise.all(batch.map(async (chunk, idx) => {
+          const chunkKey = `file:${file.id}:chunk:${i + idx}`;
+          let chunkEmbedding = this.embeddingCache.get(chunkKey);
+          
+          if (!chunkEmbedding) {
+            chunkEmbedding = await this.getEmbedding(chunk);
+            if (chunkEmbedding) {
+              this.embeddingCache.set(chunkKey, chunkEmbedding);
+            }
+          }
+          
+          if (!chunkEmbedding) return { score: 0, chunk, index: i + idx };
+          
+          const similarity = this.cosineSimilarity(queryEmbedding, chunkEmbedding);
+          return { score: similarity, chunk, index: i + idx };
+        }));
+        
+        for (const result of batchResults) {
+          if (result.score > bestScore) {
+            bestScore = result.score;
+            bestChunk = result.chunk;
+            bestChunkIndex = result.index;
+          }
+        }
+      }
+      
+      // Create a modified file with the best chunk as content
+      // This helps the AI focus on the most relevant part of the document
+      const modifiedFile = { 
+        ...file,
+        content_text: bestChunk,
+        // Store the original content position for citation purposes
+        metadata: {
+          ...file.metadata,
+          chunk_position: bestChunkIndex,
+          chunk_start: file.content_text.indexOf(bestChunk),
+          original_length: file.content_text.length,
+          chunk_length: bestChunk.length
+        }
+      };
+      
+      return { file: modifiedFile, score: bestScore };
+    } catch (error) {
+      console.error('Error processing file for search:', error);
+      return { file, score: 0 };
     }
-    
-    console.log(`Processed ${processedChunks} chunks for file ${file.name}, best score: ${bestScore.toFixed(2)}`);
-    return { file, score: bestScore };
   },
   
   // Recursive character text splitter with overlap
