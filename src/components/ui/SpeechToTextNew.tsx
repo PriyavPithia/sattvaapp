@@ -78,6 +78,8 @@ export function SpeechToText({
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [transcribedText, setTranscribedText] = useState(initialText);
+  const [finalTranscript, setFinalTranscript] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
   const [isSupported, setIsSupported] = useState(true);
   const [volumeLevel, setVolumeLevel] = useState(0);
   
@@ -91,6 +93,17 @@ export function SpeechToText({
       onProcessingChange(isRecording);
     }
   }, [isRecording, onProcessingChange]);
+
+  // Update transcribed text whenever final or interim transcript changes
+  useEffect(() => {
+    const combinedText = finalTranscript + interimTranscript;
+    setTranscribedText(combinedText);
+    
+    // Call the callback if provided
+    if (onTranscriptionComplete) {
+      onTranscriptionComplete(combinedText);
+    }
+  }, [finalTranscript, interimTranscript, onTranscriptionComplete]);
 
   // Check if browser supports audio recording and speech recognition
   useEffect(() => {
@@ -143,7 +156,8 @@ export function SpeechToText({
   const startRecording = async () => {
     try {
       // Clear previous data
-      setTranscribedText('');
+      setFinalTranscript('');
+      setInterimTranscript('');
       
       // Start recording for volume visualization only
       await audioRecorder.current.startRecording();
@@ -162,25 +176,25 @@ export function SpeechToText({
       recognition.lang = 'en-US';
       
       recognition.onresult = (event) => {
-        let interimTranscript = '';
-        let finalTranscript = '';
+        let currentInterimTranscript = '';
+        let currentFinalTranscript = '';
         
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
-            finalTranscript += transcript;
+            currentFinalTranscript += transcript;
           } else {
-            interimTranscript += transcript;
+            currentInterimTranscript += transcript;
           }
         }
         
-        // Update the transcribed text with both final and interim results
-        setTranscribedText(finalTranscript + interimTranscript);
-        
-        // Call the callback if provided
-        if (onTranscriptionComplete) {
-          onTranscriptionComplete(finalTranscript + interimTranscript);
+        // Update the final transcript by appending the new final transcript
+        if (currentFinalTranscript) {
+          setFinalTranscript(prev => prev + ' ' + currentFinalTranscript.trim());
         }
+        
+        // Replace the interim transcript with the current one
+        setInterimTranscript(currentInterimTranscript);
       };
       
       recognition.onerror = (event) => {
@@ -221,11 +235,20 @@ export function SpeechToText({
       
       setIsRecording(false);
       
+      // Add any remaining interim transcript to the final transcript
+      if (interimTranscript.trim()) {
+        setFinalTranscript(prev => {
+          const combined = prev + ' ' + interimTranscript.trim();
+          return combined.trim();
+        });
+        setInterimTranscript('');
+      }
+      
       toast.success('Recording stopped');
       
       // Call the callback with the final transcription
-      if (onTranscriptionComplete && transcribedText) {
-        onTranscriptionComplete(transcribedText);
+      if (onTranscriptionComplete && finalTranscript) {
+        onTranscriptionComplete(finalTranscript);
       }
     } catch (error) {
       console.error('Failed to stop recording:', error);
@@ -242,7 +265,8 @@ export function SpeechToText({
   };
 
   const handleClear = () => {
-    setTranscribedText('');
+    setFinalTranscript('');
+    setInterimTranscript('');
     setRecordingDuration(0);
   };
 
@@ -315,25 +339,34 @@ export function SpeechToText({
         {isRecording && (
           <div className="space-y-2">
             <Progress value={volumeLevel} className="h-1" />
-            <p className="text-xs text-gray-500">
-              Speak clearly into your microphone. Click the stop button when finished.
-            </p>
           </div>
         )}
         
-        <Textarea
-          placeholder="Transcribed text will appear here in real-time as you speak..."
-          value={transcribedText}
-          onChange={(e) => setTranscribedText(e.target.value)}
-          className="min-h-[150px]"
-        />
-        
-        {isRecording && (
-          <div className="text-xs text-gray-500">
-            Real-time transcription is active. You can see the text as you speak.
+        <div className="space-y-2">
+          <label htmlFor="transcription" className="text-sm font-medium">
+            Transcription
+          </label>
+          <Textarea
+            id="transcription"
+            value={transcribedText}
+            onChange={(e) => setTranscribedText(e.target.value)}
+            placeholder="Speak to see transcription here..."
+            className="min-h-[150px] resize-none"
+          />
+          <div className="text-xs text-muted-foreground">
+            {isRecording ? (
+              <span className="text-sattva-600">
+                Speaking... {interimTranscript && <span className="italic">(interim: {interimTranscript})</span>}
+              </span>
+            ) : (
+              transcribedText ? 
+                "You can edit the transcription if needed." : 
+                "Start recording to generate transcription."
+            )}
           </div>
-        )}
+        </div>
       </CardContent>
+      
       <CardFooter className="flex justify-between">
         <Button
           variant="outline"

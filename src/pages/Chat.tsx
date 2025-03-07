@@ -702,13 +702,13 @@ const Chat = () => {
       setIsYoutubeVideo(true);
       
       // Extract the YouTube video ID
-      const videoId = extractYoutubeVideoId(file.source_url);
+        const videoId = extractYoutubeVideoId(file.source_url);
       if (!videoId) {
         console.error('Invalid YouTube URL:', file.source_url);
         return;
       }
       
-      setVideoId(videoId);
+          setVideoId(videoId);
       
       // If we don't have the chunked transcript yet, fetch and parse it
       if (!chunkedTranscript) {
@@ -815,7 +815,7 @@ const Chat = () => {
         console.log('Highlighting text in video file:', reference.text);
         
         // Wait for the content to be rendered and tab to be active before highlighting
-        setTimeout(() => {
+          setTimeout(() => {
           // Try different selectors for the content container
           // First, look for containers within the transcript tab
           const transcriptTab = document.querySelector('[data-state="active"][role="tabpanel"]');
@@ -849,9 +849,9 @@ const Chat = () => {
           } else {
             console.error('Content container not found for highlighting');
           }
-        }, 500);
-      }
-    } else {
+          }, 500);
+        }
+      } else {
       // For other file types (PDF, text, etc.), highlight the referenced text
       setIsYoutubeVideo(false);
       
@@ -1009,55 +1009,55 @@ const Chat = () => {
     
     console.log('Highlighting text:', textToFind);
     
-    // Find the text in the content
-    const content = contentRef.current.textContent || '';
-    const index = content.indexOf(textToFind);
-    
-    if (index !== -1) {
-      // Create a range to highlight the text
-      const range = document.createRange();
-      const textNodes = getTextNodes(contentRef.current);
-      
-      let charCount = 0;
-      let startNode = null;
-      let startOffset = 0;
-      let endNode = null;
-      let endOffset = 0;
-      
-      // Find the start and end nodes/offsets
-      for (const node of textNodes) {
-        const nodeLength = node.textContent?.length || 0;
+        // Find the text in the content
+        const content = contentRef.current.textContent || '';
+        const index = content.indexOf(textToFind);
         
-        if (!startNode && charCount + nodeLength > index) {
-          startNode = node;
-          startOffset = index - charCount;
-        }
-        
-        if (startNode && !endNode && charCount + nodeLength >= index + textToFind.length) {
-          endNode = node;
-          endOffset = index + textToFind.length - charCount;
-          break;
-        }
-        
-        charCount += nodeLength;
-      }
-      
-      if (startNode && endNode) {
-        // Scroll to the start node
-        startNode.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        
-        // Highlight the text
-        const highlightEl = document.createElement('span');
-        highlightEl.className = 'bg-purple-100 highlight-reference';
-        
-        try {
-          range.setStart(startNode, startOffset);
-          range.setEnd(endNode, endOffset);
-          range.surroundContents(highlightEl);
+        if (index !== -1) {
+          // Create a range to highlight the text
+          const range = document.createRange();
+          const textNodes = getTextNodes(contentRef.current);
           
+          let charCount = 0;
+          let startNode = null;
+          let startOffset = 0;
+          let endNode = null;
+          let endOffset = 0;
+          
+          // Find the start and end nodes/offsets
+          for (const node of textNodes) {
+            const nodeLength = node.textContent?.length || 0;
+            
+            if (!startNode && charCount + nodeLength > index) {
+              startNode = node;
+              startOffset = index - charCount;
+            }
+            
+            if (startNode && !endNode && charCount + nodeLength >= index + textToFind.length) {
+              endNode = node;
+              endOffset = index + textToFind.length - charCount;
+              break;
+            }
+            
+            charCount += nodeLength;
+          }
+          
+          if (startNode && endNode) {
+            // Scroll to the start node
+            startNode.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            
+            // Highlight the text
+            const highlightEl = document.createElement('span');
+        highlightEl.className = 'bg-purple-100 highlight-reference';
+            
+            try {
+              range.setStart(startNode, startOffset);
+              range.setEnd(endNode, endOffset);
+              range.surroundContents(highlightEl);
+              
           // Remove the highlight after 5 seconds
-          setTimeout(() => {
-            if (highlightEl.parentNode) {
+              setTimeout(() => {
+                if (highlightEl.parentNode) {
               // Replace the highlight element with its text content
               highlightEl.parentNode.replaceChild(
                 document.createTextNode(highlightEl.textContent || ''),
@@ -1065,40 +1065,40 @@ const Chat = () => {
               );
             }
           }, 5000);
-        } catch (e) {
-          console.error('Error highlighting text:', e);
-          
-          // Fallback: just scroll to the element containing the text
-          const textElements = Array.from(contentRef.current.querySelectorAll('p, li, blockquote, h1, h2, h3, h4, h5, h6'));
-          const elementWithText = textElements.find(el => el.textContent?.includes(textToFind));
-          if (elementWithText) {
-            elementWithText.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            elementWithText.classList.add('bg-purple-100');
+            } catch (e) {
+              console.error('Error highlighting text:', e);
+              
+              // Fallback: just scroll to the element containing the text
+              const textElements = Array.from(contentRef.current.querySelectorAll('p, li, blockquote, h1, h2, h3, h4, h5, h6'));
+              const elementWithText = textElements.find(el => el.textContent?.includes(textToFind));
+              if (elementWithText) {
+                elementWithText.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                elementWithText.classList.add('bg-purple-100');
             elementWithText.classList.add('highlight-reference');
-            setTimeout(() => {
-              elementWithText.classList.remove('bg-purple-100');
+                setTimeout(() => {
+                  elementWithText.classList.remove('bg-purple-100');
               elementWithText.classList.remove('highlight-reference');
             }, 5000);
+              }
+            }
           }
-        }
-      }
-    } else {
-      // If exact text not found, try to find a close match
-      const textElements = Array.from(contentRef.current.querySelectorAll('p, li, blockquote, h1, h2, h3, h4, h5, h6'));
-      
-      // Try to find an element containing a significant portion of the text
-      const words = textToFind.split(/\s+/).filter(w => w.length > 3);
-      if (words.length > 0) {
-        const elementWithSimilarText = textElements.find(el => 
-          words.some(word => el.textContent?.includes(word))
-        );
-        
-        if (elementWithSimilarText) {
-          elementWithSimilarText.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          elementWithSimilarText.classList.add('bg-purple-100');
+        } else {
+          // If exact text not found, try to find a close match
+          const textElements = Array.from(contentRef.current.querySelectorAll('p, li, blockquote, h1, h2, h3, h4, h5, h6'));
+          
+          // Try to find an element containing a significant portion of the text
+          const words = textToFind.split(/\s+/).filter(w => w.length > 3);
+          if (words.length > 0) {
+            const elementWithSimilarText = textElements.find(el => 
+              words.some(word => el.textContent?.includes(word))
+            );
+            
+            if (elementWithSimilarText) {
+              elementWithSimilarText.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              elementWithSimilarText.classList.add('bg-purple-100');
           elementWithSimilarText.classList.add('highlight-reference');
-          setTimeout(() => {
-            elementWithSimilarText.classList.remove('bg-purple-100');
+              setTimeout(() => {
+                elementWithSimilarText.classList.remove('bg-purple-100');
             elementWithSimilarText.classList.remove('highlight-reference');
           }, 5000);
         }
@@ -1174,11 +1174,11 @@ const Chat = () => {
   const renderContentWithReferences = (content: string, references?: { fileId: string; text: string; position?: number; }[], isGenericResponse?: boolean) => {
     // Check if there are any references
     if (!references || references.length === 0) {
-      return (
-        <div className="prose prose-sm max-w-none">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+    return (
+      <div className="prose prose-sm max-w-none">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
             {content || ''}
-          </ReactMarkdown>
+        </ReactMarkdown>
         </div>
       );
     }
@@ -1263,32 +1263,32 @@ const Chat = () => {
     
     // Check if there are any references
     if (!message.references || message.references.length === 0) {
-      return (
-        <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
-          <div className={`flex ${isUser ? 'flex-row-reverse' : 'flex-row'} max-w-[80%]`}>
-            <div className={`flex-shrink-0 ${isUser ? 'ml-3' : 'mr-3'}`}>
+    return (
+      <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
+        <div className={`flex ${isUser ? 'flex-row-reverse' : 'flex-row'} max-w-[80%]`}>
+          <div className={`flex-shrink-0 ${isUser ? 'ml-3' : 'mr-3'}`}>
+            {isUser ? (
+              <UserAvatar className="h-8 w-8" />
+            ) : (
+              <div className="h-8 w-8 rounded-full bg-sattva-600 flex items-center justify-center text-white">
+                <Bot className="h-5 w-5" />
+              </div>
+            )}
+          </div>
+          
+          <div>
+            <div className={`rounded-lg px-4 py-3 ${
+              isUser 
+                ? 'bg-sattva-600 text-white' 
+                : 'bg-white border border-sattva-200 shadow-sm'
+            }`}>
               {isUser ? (
-                <UserAvatar className="h-8 w-8" />
+                <div className="whitespace-pre-wrap">{message.content}</div>
               ) : (
-                <div className="h-8 w-8 rounded-full bg-sattva-600 flex items-center justify-center text-white">
-                  <Bot className="h-5 w-5" />
-                </div>
-              )}
-            </div>
-            
-            <div>
-              <div className={`rounded-lg px-4 py-3 ${
-                isUser 
-                  ? 'bg-sattva-600 text-white' 
-                  : 'bg-white border border-sattva-200 shadow-sm'
-              }`}>
-                {isUser ? (
-                  <div className="whitespace-pre-wrap">{message.content}</div>
-                ) : (
-                  <div className="prose prose-sm max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                <div className="prose prose-sm max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {message.content || ''}
-                    </ReactMarkdown>
+                  </ReactMarkdown>
                   </div>
                 )}
               </div>
@@ -1382,12 +1382,12 @@ const Chat = () => {
                   {/* Always show the CitationsList component for sources at the bottom if there are references */}
                   {message.references && message.references.length > 0 && (
                     <div className="mt-4">
-                      <CitationsList 
-                        references={message.references}
+                    <CitationsList 
+                      references={message.references}
                         knowledgebaseFiles={knowledgebaseFiles || []}
-                        onReferenceClick={handleReferenceClick}
+                      onReferenceClick={handleReferenceClick}
                         onSourceClick={handleSourceClick}
-                      />
+                    />
                     </div>
                   )}
                 </div>
@@ -1677,30 +1677,30 @@ const Chat = () => {
                             {chunkedTranscript.map((chunk, index) => {
                               const isCurrentChunk = currentTime >= chunk.startTime && currentTime <= chunk.endTime;
                               return (
-                                <div 
-                                  key={`chunk-${index}`}
-                                  id={`chunk-${chunk.startTime}`}
+                              <div 
+                                key={`chunk-${index}`}
+                                id={`chunk-${chunk.startTime}`}
                                   className={`p-3 rounded-lg border cursor-pointer transition-all duration-300 hover:bg-gray-50 ${
                                     isCurrentChunk 
-                                      ? 'bg-sattva-50 border-sattva-200' 
+                                    ? 'bg-sattva-50 border-sattva-200' 
                                       : 'border-gray-200'
-                                  }`}
-                                  onClick={() => handleTranscriptChunkClick(chunk.startTime)}
-                                >
-                                  <div className="flex items-start gap-2">
-                                    <div className="flex-shrink-0 mt-1">
+                                }`}
+                                onClick={() => handleTranscriptChunkClick(chunk.startTime)}
+                              >
+                                <div className="flex items-start gap-2">
+                                  <div className="flex-shrink-0 mt-1">
                                       <Play className={`h-3 w-3 ${isCurrentChunk ? 'text-sattva-600' : 'text-gray-500'}`} />
-                                    </div>
-                                    <div className="flex-1">
-                                      <div className="flex items-center justify-between mb-1">
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className="flex items-center justify-between mb-1">
                                         <span className={`text-xs font-medium ${isCurrentChunk ? 'text-sattva-600' : 'text-gray-500'}`}>
-                                          {formatTime(chunk.startTime)} - {formatTime(chunk.endTime)}
-                                        </span>
-                                      </div>
-                                      <p className="text-sm">{chunk.text}</p>
+                                        {formatTime(chunk.startTime)} - {formatTime(chunk.endTime)}
+                                      </span>
                                     </div>
+                                    <p className="text-sm">{chunk.text}</p>
                                   </div>
                                 </div>
+                              </div>
                               );
                             })}
                           </div>
