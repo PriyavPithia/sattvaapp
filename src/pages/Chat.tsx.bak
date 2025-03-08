@@ -760,16 +760,11 @@ const Chat = () => {
     } else if (['audio', 'mp3', 'mpeg', 'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/webm', 'audio/ogg'].includes(file.type.toLowerCase()) || 
                (file.name && file.name.toLowerCase().endsWith('.mp3')) || 
                (file.source_url && file.source_url.toLowerCase().endsWith('.mp3'))) {
-      // Handle audio files with or without timestamps
+      // Handle audio files - prioritize text references over timestamps
       console.log('Handling audio file reference:', file.name, file.type);
       setIsYoutubeVideo(false);
       
-      // Set current time if position is provided
-      if (reference.position !== undefined) {
-        setCurrentTime(reference.position);
-      }
-      
-      // Highlight the text if available
+      // Highlight the text if available, regardless of position
       if (reference.text) {
         console.log('Highlighting text in audio file:', reference.text);
         
@@ -803,12 +798,24 @@ const Chat = () => {
             
             // Give the container a moment to fully render its content
             setTimeout(() => {
-              highlightTextInElement(reference.text, contentContainer!);
+              const result = highlightTextInElement(reference.text, contentContainer!);
+              
+              // If exact match fails, try with a shorter version
+              if (!result.success && reference.text.length > 10) {
+                console.log('Exact text match failed, trying with shorter text');
+                const shorterText = reference.text.substring(0, Math.min(50, reference.text.length));
+                highlightTextInElement(shorterText, contentContainer!);
+              }
             }, 300);
           } else {
             console.error('Content container not found for highlighting');
           }
         }, 500);
+      }
+      
+      // Only set current time if text reference is not available
+      if (!reference.text && reference.position !== undefined) {
+        setCurrentTime(reference.position);
       }
     } else if (['video'].includes(file.type.toLowerCase()) && reference.position !== undefined) {
       // Handle video files with timestamps
@@ -850,7 +857,14 @@ const Chat = () => {
             
             // Give the container a moment to fully render its content
             setTimeout(() => {
-              highlightTextInElement(reference.text, contentContainer!);
+              const result = highlightTextInElement(reference.text, contentContainer!);
+              
+              // If exact match fails, try with a shorter version
+              if (!result.success && reference.text.length > 10) {
+                console.log('Exact text match failed, trying with shorter text');
+                const shorterText = reference.text.substring(0, Math.min(50, reference.text.length));
+                highlightTextInElement(shorterText, contentContainer!);
+              }
             }, 300);
           } else {
             console.error('Content container not found for highlighting');
@@ -898,7 +912,14 @@ const Chat = () => {
           
           // Give the container a moment to fully render its content
           setTimeout(() => {
-            highlightTextInElement(reference.text, contentContainer!);
+            const result = highlightTextInElement(reference.text, contentContainer!);
+            
+            // If exact match fails, try with a shorter version
+            if (!result.success && reference.text.length > 10) {
+              console.log('Exact text match failed, trying with shorter text');
+              const shorterText = reference.text.substring(0, Math.min(50, reference.text.length));
+              highlightTextInElement(shorterText, contentContainer!);
+            }
           }, 300);
         }, 500);
       }
@@ -1382,106 +1403,6 @@ const Chat = () => {
               <div className="mt-1 text-xs text-sattva-400 text-right">
                 {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-    
-    // Check if there are any YouTube references
-    const hasYoutubeReferences = message.references.some(ref => {
-      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
-      return file?.type.toLowerCase() === 'youtube';
-    });
-    
-    // Check if there are any non-YouTube references
-    const hasOtherReferences = message.references.some(ref => {
-      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
-      return file?.type.toLowerCase() !== 'youtube';
-    });
-    
-    // Separate YouTube references from other references
-    const youtubeReferences = message.references.filter(ref => {
-      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
-      return file?.type.toLowerCase() === 'youtube';
-    });
-    
-    const otherReferences = message.references.filter(ref => {
-      const file = knowledgebaseFiles?.find(f => f.id === ref.fileId);
-      return file?.type.toLowerCase() !== 'youtube';
-    });
-    
-    return (
-      <div className={`flex ${isUser ? 'justify-end' : 'justify-start'} mb-4`}>
-        <div className={`flex ${isUser ? 'flex-row-reverse' : 'flex-row'} max-w-[80%]`}>
-          <div className={`flex-shrink-0 ${isUser ? 'ml-3' : 'mr-3'}`}>
-            {isUser ? (
-              <UserAvatar className="h-8 w-8" />
-            ) : (
-              <div className="h-8 w-8 rounded-full bg-sattva-600 flex items-center justify-center text-white">
-                <Bot className="h-5 w-5" />
-              </div>
-            )}
-          </div>
-          
-          <div>
-            <div className={`rounded-lg px-4 py-3 ${
-              isUser 
-                ? 'bg-sattva-600 text-white' 
-                : 'bg-white border border-sattva-200 shadow-sm'
-            }`}>
-              {isUser ? (
-                <div className="whitespace-pre-wrap">{message.content}</div>
-              ) : (
-                <div className="prose prose-sm max-w-none">
-                  {hasYoutubeReferences && !hasOtherReferences && (
-                    /* Only YouTube references - use YoutubeCitationParser */
-                    <YoutubeCitationParser
-                      content={message.content || ''}
-                      references={youtubeReferences}
-                      knowledgebaseFiles={knowledgebaseFiles || []}
-                      onReferenceClick={handleReferenceClick}
-                    />
-                  )}
-                  
-                  {!hasYoutubeReferences && hasOtherReferences && (
-                    /* Only non-YouTube references - use TextCitationParser */
-                    <TextCitationParser
-                      content={message.content || ''}
-                      references={otherReferences}
-                      knowledgebaseFiles={knowledgebaseFiles || []}
-                      onReferenceClick={handleReferenceClick}
-                    />
-                  )}
-                  
-                  {hasYoutubeReferences && hasOtherReferences && (
-                    /* Both types of references - use MixedCitationParser */
-                    <MixedCitationParser
-                      content={message.content || ''}
-                      references={message.references}
-                      knowledgebaseFiles={knowledgebaseFiles || []}
-                      onReferenceClick={handleReferenceClick}
-                    />
-                  )}
-                  
-                  {/* Always show the CitationsList component for sources at the bottom if there are references */}
-                  {message.references && message.references.length > 0 && (
-                    <div className="mt-4">
-                    <CitationsList 
-                      references={message.references}
-                        knowledgebaseFiles={knowledgebaseFiles || []}
-                      onReferenceClick={handleReferenceClick}
-                        onSourceClick={handleSourceClick}
-                    />
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            
-            {/* Add timestamp */}
-            <div className="mt-1 text-xs text-sattva-400 text-right">
-              {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
             </div>
           </div>
         </div>

@@ -86,11 +86,22 @@ export const YoutubePlayer = forwardRef<{ playFromTime: (time: number) => void; 
               // Start a timer to periodically update the current time
               const interval = setInterval(() => {
                 if (playerRef.current) {
-                  onSeek(playerRef.current.getCurrentTime());
+                  const currentTime = playerRef.current.getCurrentTime();
+                  onSeek(currentTime);
                 }
-              }, 1000);
+              }, 500); // Update more frequently (every 500ms instead of 1000ms)
               
               return () => clearInterval(interval);
+            }
+            
+            // Clear any existing intervals when the video is paused or ended
+            if ((event.data === window.YT.PlayerState.PAUSED || 
+                event.data === window.YT.PlayerState.ENDED) && onSeek) {
+              // Just trigger one final time update to ensure the UI is in sync
+              if (playerRef.current) {
+                const currentTime = playerRef.current.getCurrentTime();
+                onSeek(currentTime);
+              }
             }
           },
         },

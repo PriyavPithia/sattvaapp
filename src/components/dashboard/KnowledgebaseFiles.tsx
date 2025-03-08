@@ -4,11 +4,12 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { knowledgebaseService } from '@/lib/knowledgebaseService';
 import { toast } from 'sonner';
-import { FileText, Search, Trash, ArrowLeft, Upload, Code, Edit, ChevronLeft, RefreshCw } from 'lucide-react';
+import { FileText, Search, Trash, ArrowLeft, Upload, Code, Edit, ChevronLeft, RefreshCw, MessageSquare } from 'lucide-react';
 import { formatFileSize } from '@/lib/utils';
 import { FileContentViewer } from './FileContentViewer';
 import type { FileRecord } from '@/lib/supabase';
 import { useToast } from '@/components/ui/use-toast';
+import { useNavigate } from 'react-router-dom';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -56,6 +57,7 @@ export const KnowledgebaseFiles = forwardRef<{ refreshFiles: () => Promise<void>
   const [fileToRename, setFileToRename] = useState<FileRecord | null>(null);
   const [newFileName, setNewFileName] = useState('');
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   // Define fetchFiles function first
   const fetchFiles = async () => {
@@ -291,6 +293,14 @@ export const KnowledgebaseFiles = forwardRef<{ refreshFiles: () => Promise<void>
                 Refresh
               </>
             )}
+          </Button>
+          <Button 
+            size="sm"
+            onClick={() => navigate(`/chat?kb=${knowledgebaseId}`)}
+            className="bg-sattva-600 hover:bg-sattva-700"
+          >
+            <MessageSquare className="h-4 w-4 mr-2" />
+            Chat
           </Button>
           <Button 
             size="sm"
