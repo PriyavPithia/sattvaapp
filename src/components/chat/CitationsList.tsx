@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileText, Youtube, Headphones, Video, FileIcon } from 'lucide-react';
+import { FileText, Youtube, Headphones, Video, FileIcon, Globe } from 'lucide-react';
 import type { FileRecord } from '@/lib/supabase';
 
 interface CitationsListProps {
@@ -71,6 +71,8 @@ export const CitationsList: React.FC<CitationsListProps> = ({
             Icon = Headphones;
           } else if (file.type?.toLowerCase() === 'video') {
             Icon = Video;
+          } else if (file.type?.toLowerCase() === 'website') {
+            Icon = Globe;
           }
           
           return (

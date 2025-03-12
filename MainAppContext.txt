@@ -1,0 +1,91 @@
+I will provide you with a prompt with which you will use to generate the file structure and UI of the app. Use best coding practicinga and professional file arrangement. with README files explaing feature. also uuse good descriptive variable names. The UI refrence image is attached. and the prompt is as follows;
+
+Here's the **final prompt update**, now including **server-side processing for better video handling**:  
+
+---
+
+**Prompt:**  
+Build a **next-generation Learning Management System (LMS)**—a **Udemy clone with advanced AI features** and **collaborative learning tools**. This platform should offer **comprehensive course creation, student engagement, monetization, and AI-powered study enhancements** while ensuring a **user-friendly experience**, **mobile responsiveness**, and adherence to **best coding practices**.  
+
+**Use the attached image as a design reference** for the UI/UX.  
+**Tech Stack:**
+   - **Frontend:** Next.js / React (Specify if needed)  
+   - **Backend:** Node.js / NestJS / Express (Specify if needed)  
+   - **Database:** Supabase  
+   - **Payments:** Stripe  
+   - **Video Processing & Hosting:** Server-side handling for optimized video playback  
+
+### **Core Features:**  
+1. **User Authentication & Profiles**  
+   - Sign-up/Login (Email, Google, Facebook, etc.)  
+   - **Email verification via link:** Users must verify their email before accessing the platform.  
+   - Instructor and Student account types  
+   - Profile pages with bio, achievements, and enrolled/published courses  
+
+2. **Course Creation & Management**  
+   - Instructors can create, edit, and publish courses  
+   - Multi-format content: Video, PDFs, Quizzes, Assignments  
+   - Drip content scheduling (release modules over time)  
+   - Course categories and search filters  
+
+3. **Enhanced Video Handling (Server-Side Processing)**  
+   - **Optimized Video Streaming:**  
+     - Server-side processing for encoding and adaptive bitrate streaming  
+     - **Video compression to optimize bandwidth usage**  
+     - Secure **video hosting and storage**  
+   - **Advanced Video Player Features:**  
+     - **Playback speed control** (0.5x, 1x, 1.5x, 2x)  
+     - **Transcripts & Captions ON/OFF toggle**  
+     - **Customizable video settings**  
+     - **Full-screen mode**  
+     - **Timestamped Notes** (Users can add notes linked to video timestamps)  
+
+4. **AI-Powered Features for Enhanced Learning**  
+   - **AI Assistant (Chatbot)** → Users can chat with an AI that answers questions based on course content.  
+     - Videos are **transcribed and added to the knowledge base** for chatbot responses.  
+     - Users can **filter** which course or section to chat with AI about.  
+   - **Flashcards & AI Study Assistance:**  
+     - **AI-Generated Flashcards** → Users can create **flashcards** based on video transcriptions.  
+     - AI generates **university-level Q&A** flashcards in the format:  
+       - **Q:** [Question]  
+       - **A:** [Answer]  
+     - The system parses these Q&A pairs and displays them in a **flashcard interface**.  
+
+5. **Document Management System (DMS) for Courses**  
+   - Each course has a **centralized document repository** where instructors and students can **upload, manage, and download course materials**.  
+
+6. **Social Learning & Collaboration**  
+   - **Group Huddles (Discord-like Functionality)** → Students can:  
+     - Create private or public study groups  
+     - Invite other students to join  
+     - Share files, chat, and collaborate in real-time  
+
+7. **Monetization & Payments (via Stripe)**  
+   - One-time course purchases and subscriptions  
+   - Coupon codes and discount management  
+   - Instructor revenue split & payout management  
+   - Secure transactions through Stripe  
+
+8. **Admin & Analytics**  
+   - Instructor earnings dashboard  
+   - Student progress reports & analytics  
+   - Course performance tracking  
+   - Content moderation tools  
+
+9. **Database & Backend (Supabase + Server-Side Processing)**  
+   - Store **users, courses, payments, notes, and flashcards** in Supabase  
+   - **Email verification system via Supabase Auth**  
+   - **Video processing handled on the server** for smooth playback  
+   - Real-time updates for collaborative features (group huddles, Q&A, chat)  
+
+10. **Mobile Optimization & Best Practices**  
+   - **Fully responsive design for web and mobile**  
+   - **Intuitive and user-friendly UI** based on the attached design reference  
+   - **Follows best coding practices** (clean architecture, modular code, scalability)  
+   - **Optimized performance** for fast load times and seamless user experience  
+
+---
+
+**This LMS is designed for maximum engagement, AI-powered learning, and seamless collaboration while ensuring high performance and a user-friendly experience.**  
+
+Would you like to **specify the backend framework (Node.js/NestJS/Express, etc.)**, or should we refine any features further? 

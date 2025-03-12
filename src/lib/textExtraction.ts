@@ -7,6 +7,7 @@ import * as pdfjsLib from 'pdfjs-dist';
 import { TextItem } from 'pdfjs-dist/types/src/display/api';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
+import { scrapeWebsite } from './websiteScraper';
 
 // Set the worker source
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
@@ -461,6 +462,44 @@ export async function extractTextFromAudio(file: File): Promise<ExtractedContent
   } catch (error) {
     console.error('[Audio Extraction] Error transcribing audio:', error);
     throw new Error(`Failed to transcribe audio: ${error.message}`);
+  }
+}
+
+/**
+ * Extract text from a website by scraping its content
+ * This function uses the websiteScraper to extract text from a website
+ */
+export async function extractTextFromWebsite(
+  websiteUrl: string,
+  websiteTitle: string = "Website Content"
+): Promise<ExtractedContent> {
+  try {
+    console.log(`[Website Extraction] Starting extraction for ${websiteUrl}`);
+    
+    // Use the websiteScraper to extract text from the website
+    const scrapedData = await scrapeWebsite(websiteUrl);
+    
+    if (!scrapedData.text) {
+      throw new Error('No text content found in the website');
+    }
+    
+    console.log(`[Website Extraction] Extracted ${scrapedData.text.length} characters of text`);
+    console.log(`[Website Extraction] Text sample: ${scrapedData.text.substring(0, 100)}...`);
+    
+    return {
+      text: scrapedData.text,
+      metadata: {
+        source_type: 'website',
+        title: scrapedData.title || websiteTitle,
+        url: websiteUrl,
+        wordCount: scrapedData.metadata.wordCount,
+        paragraphCount: scrapedData.metadata.paragraphCount,
+        headings: scrapedData.metadata.headings
+      }
+    };
+  } catch (error) {
+    console.error('[Website Extraction] Error extracting text from website:', error);
+    throw new Error(`Failed to extract text from website: ${error.message}`);
   }
 }
 

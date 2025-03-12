@@ -11,11 +11,11 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { FileUpload } from '@/components/ui/FileUpload';
 import { Input } from '@/components/ui/input';
-import { Youtube, Mic, Upload, FileText, Eye, ArrowRight, FileAudio, PenLine, Video } from 'lucide-react';
+import { Youtube, Mic, Upload, FileText, Eye, ArrowRight, FileAudio, PenLine, Video, Globe } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/lib/AuthContext';
 import { knowledgebaseService } from '@/lib/knowledgebaseService';
-import { extractTextFromFile, extractTextFromPdf, extractTextFromYouTube, ExtractedContent } from '@/lib/textExtraction';
+import { extractTextFromFile, extractTextFromPdf, extractTextFromYouTube, extractTextFromWebsite, ExtractedContent } from '@/lib/textExtraction';
 import { extractYoutubeVideoId, formatTime } from '@/lib/youtubeService';
 import { formatFileSize } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
@@ -49,6 +49,7 @@ export function FileUploadModal({
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState('upload');
   const [youtubeUrl, setYoutubeUrl] = useState('');
+  const [websiteUrl, setWebsiteUrl] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isExtracting, setIsExtracting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
@@ -604,6 +605,72 @@ export function FileUploadModal({
     setSelectedFile(null);
   };
 
+  const handleWebsiteUpload = async () => {
+    if (!websiteUrl.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a valid website URL",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      
+      // Extract text from the website
+      const extractedContent = await extractTextFromWebsite(websiteUrl);
+      
+      if (!extractedContent.text) {
+        throw new Error('No text content found in the website');
+      }
+      
+      // Create a file name from the website title or URL
+      const websiteTitle = extractedContent.metadata.title || new URL(websiteUrl).hostname;
+      const fileName = `${websiteTitle.replace(/[^a-z0-9]/gi, '_').substring(0, 30)}.txt`;
+      
+      // Add the file to the knowledge base
+      await knowledgebaseService.addContentToKnowledgebase(
+        userId,
+        knowledgeBaseId,
+        fileName,
+        'website',
+        extractedContent.text.length,
+        websiteUrl,
+        extractedContent.text,
+        {
+          ...extractedContent.metadata,
+          source_type: 'website'
+        }
+      );
+      
+      toast({
+        title: "Success",
+        description: "Website content added to knowledge base",
+      });
+      
+      // Reset the form
+      setWebsiteUrl('');
+      
+      // Call the onSuccess callback if provided
+      if (onSuccess) {
+        onSuccess();
+      }
+      
+      // Close the modal
+      onClose();
+    } catch (error) {
+      console.error('Error uploading website content:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to extract content from website",
+        variant: "destructive"
+      });
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   return (
     <Dialog 
       open={isOpen} 
@@ -702,7 +769,7 @@ export function FileUploadModal({
         ) : (
           <>
             <Tabs defaultValue="upload" className="flex-1 overflow-hidden flex flex-col" value={activeTab} onValueChange={setActiveTab}>
-              <TabsList className="grid grid-cols-6">
+              <TabsList className="grid grid-cols-7">
                 <TabsTrigger value="upload" disabled={isProcessing}>
                   <Upload className="h-4 w-4 mr-2" />
                   <span className="hidden sm:inline">Upload</span>
@@ -711,6 +778,10 @@ export function FileUploadModal({
                   <Youtube className="h-4 w-4 mr-2" />
                   <span className="hidden sm:inline">YouTube</span>
                 </TabsTrigger>
+                <TabsTrigger value="website" disabled={isProcessing}>
+                  <Globe className="h-4 w-4 mr-2" />
+                  <span className="hidden sm:inline">Website</span>
+                </TabsTrigger>
                 <TabsTrigger value="audio" disabled={isProcessing}>
                   <FileAudio className="h-4 w-4 mr-2" />
                   <span className="hidden sm:inline">Audio</span>
@@ -718,20 +789,20 @@ export function FileUploadModal({
                 <TabsTrigger value="video" disabled={isProcessing}>
                   <Video className="h-4 w-4 mr-2" />
                   <span className="hidden sm:inline">Video</span>
-            </TabsTrigger>
+                </TabsTrigger>
                 <TabsTrigger value="record" disabled={isProcessing}>
                   <Mic className="h-4 w-4 mr-2" />
                   <span className="hidden sm:inline">Record</span>
-            </TabsTrigger>
+                </TabsTrigger>
                 <TabsTrigger value="notes" disabled={isProcessing}>
                   <PenLine className="h-4 w-4 mr-2" />
                   <span className="hidden sm:inline">Notes</span>
-            </TabsTrigger>
-          </TabsList>
-          
+                </TabsTrigger>
+              </TabsList>
+              
               <TabsContent value="upload" className="mt-0 flex-1 overflow-auto">
                 <div className="py-4 space-y-4">
-              <FileUpload 
+                  <FileUpload 
                     onUpload={handleExtractText}
                     accept={acceptedFileTypes}
                     maxSize={20 * 1024 * 1024} // 20MB
@@ -741,27 +812,46 @@ export function FileUploadModal({
                     <p>Supported file types: PDF, DOCX, DOC, PPTX, PPT, TXT</p>
                     <p>Maximum file size: 20MB</p>
                   </div>
-            </div>
-          </TabsContent>
-          
-          <TabsContent value="youtube" className="mt-0">
-            <div className="py-4 space-y-4">
-              <div className="flex flex-col space-y-2">
-                <label htmlFor="youtube-url" className="text-sm font-medium">
-                  YouTube URL
-                </label>
-                <Input
-                  id="youtube-url"
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  value={youtubeUrl}
-                  onChange={(e) => setYoutubeUrl(e.target.value)}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Enter a YouTube URL to extract content and add it to your knowledge base.
-              </p>
-            </div>
-          </TabsContent>
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="youtube" className="mt-0">
+                <div className="py-4 space-y-4">
+                  <div className="flex flex-col space-y-2">
+                    <label htmlFor="youtube-url" className="text-sm font-medium">
+                      YouTube URL
+                    </label>
+                    <Input
+                      id="youtube-url"
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      value={youtubeUrl}
+                      onChange={(e) => setYoutubeUrl(e.target.value)}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Enter a YouTube URL to extract content and add it to your knowledge base.
+                  </p>
+                </div>
+              </TabsContent>
+              
+              <TabsContent value="website" className="mt-0">
+                <div className="py-4 space-y-4">
+                  <div className="flex flex-col space-y-2">
+                    <label htmlFor="website-url" className="text-sm font-medium">
+                      Website URL
+                    </label>
+                    <Input
+                      id="website-url"
+                      placeholder="https://example.com"
+                      value={websiteUrl}
+                      onChange={(e) => setWebsiteUrl(e.target.value)}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Enter a website URL to extract content and add it to your knowledge base.
+                  </p>
+                </div>
+              </TabsContent>
               
               <TabsContent value="audio" className="mt-0">
                 <AudioToText 
@@ -777,9 +867,9 @@ export function FileUploadModal({
                   className="border-none shadow-none"
                   onProcessingChange={setIsVideoProcessing}
                 />
-          </TabsContent>
-          
-          <TabsContent value="record" className="mt-0">
+              </TabsContent>
+              
+              <TabsContent value="record" className="mt-0">
                 <SpeechToText 
                   onSave={handleRecordingUpload}
                   onTranscriptionComplete={setTranscribedText}
@@ -793,20 +883,29 @@ export function FileUploadModal({
                   onSave={handleNoteUpload}
                   className="border-none shadow-none"
                 />
-          </TabsContent>
-        </Tabs>
-        
-        <DialogFooter>
-          {activeTab === 'youtube' && (
-            <Button 
-              className="bg-sattva-600 hover:bg-sattva-700" 
-              onClick={handleYoutubeUpload}
-              disabled={isUploading}
-            >
-              {isUploading ? 'Processing...' : 'Add Video'}
-            </Button>
-          )}
-        </DialogFooter>
+              </TabsContent>
+            </Tabs>
+            
+            <DialogFooter>
+              {activeTab === 'youtube' && (
+                <Button 
+                  className="bg-sattva-600 hover:bg-sattva-700" 
+                  onClick={handleYoutubeUpload}
+                  disabled={isUploading}
+                >
+                  {isUploading ? 'Processing...' : 'Add Video'}
+                </Button>
+              )}
+              {activeTab === 'website' && (
+                <Button 
+                  className="bg-sattva-600 hover:bg-sattva-700" 
+                  onClick={handleWebsiteUpload}
+                  disabled={isUploading}
+                >
+                  {isUploading ? 'Processing...' : 'Add Website Content'}
+                </Button>
+              )}
+            </DialogFooter>
           </>
         )}
       </DialogContent>

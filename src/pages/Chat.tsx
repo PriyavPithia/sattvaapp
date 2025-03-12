@@ -3,7 +3,7 @@ import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { SendHorizonal, Plus, Bot, Upload, Clock, FileText, ExternalLink, Youtube, Play, Trash2, BookOpen } from 'lucide-react';
+import { SendHorizonal, Plus, Bot, Upload, Clock, FileText, ExternalLink, Youtube, Play, Trash2, BookOpen, Globe } from 'lucide-react';
 import { KnowledgeBaseSelector } from '@/components/chat/KnowledgeBaseSelector';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { useSearchParams, useNavigate } from 'react-router-dom';
@@ -86,10 +86,13 @@ const ReferenceButton = ({ reference, knowledgebaseFiles, onReferenceClick, getF
     label = 'PDF';
   } else if (fileType === 'audio') {
     icon = <Play className="h-3 w-3 mr-1" />;
-    label = reference.position ? formatTime(reference.position) : 'Audio';
+    label = 'Audio';
   } else if (fileType === 'video') {
     icon = <Play className="h-3 w-3 mr-1" />;
     label = reference.position ? formatTime(reference.position) : 'Video';
+  } else if (fileType === 'website') {
+    icon = <Globe className="h-3 w-3 mr-1" />;
+    label = 'Website';
   }
   
   return (
@@ -456,6 +459,8 @@ const Chat = () => {
         return 'YouTube';
       case 'audio':
         return 'Audio';
+      case 'website':
+        return 'Website';
       default:
         return type;
     }
@@ -821,7 +826,7 @@ const Chat = () => {
         console.log('Highlighting text in video file:', reference.text);
         
         // Wait for the content to be rendered and tab to be active before highlighting
-          setTimeout(() => {
+        setTimeout(() => {
           // Try different selectors for the content container
           // First, look for containers within the transcript tab
           const transcriptTab = document.querySelector('[data-state="active"][role="tabpanel"]');
@@ -855,9 +860,53 @@ const Chat = () => {
           } else {
             console.error('Content container not found for highlighting');
           }
-          }, 500);
-        }
-      } else {
+        }, 500);
+      }
+    } else if (file.type.toLowerCase() === 'website') {
+      // Handle website references like other file types
+      console.log('Handling website reference:', file.name, file.source_url);
+      setIsYoutubeVideo(false);
+      
+      // Highlight the text using the standard highlighting function
+      if (reference.text) {
+        console.log('Highlighting text in website content:', reference.text);
+        
+        // Wait for the content to be rendered and tab to be active before highlighting
+        setTimeout(() => {
+          // Try different selectors for the content container
+          const transcriptTab = document.querySelector('[data-state="active"][role="tabpanel"]');
+          let contentContainer = null;
+          
+          if (transcriptTab) {
+            // Look for containers within the active tab
+            contentContainer = 
+              transcriptTab.querySelector('.file-content-container') || 
+              transcriptTab.querySelector('.transcript-container') || 
+              transcriptTab.querySelector('.overflow-y-auto');
+          }
+          
+          // If no container found in the transcript tab, try global selectors
+          if (!contentContainer) {
+            contentContainer = 
+              document.querySelector('.file-content-container') || 
+              document.querySelector('.transcript-container') || 
+              document.querySelector('.overflow-y-auto');
+          }
+          
+          if (!contentContainer) {
+            console.error('Content container not found for highlighting');
+            return;
+          }
+          
+          console.log('Found content container for highlighting:', contentContainer);
+          
+          // Use the standard highlight function
+          setTimeout(() => {
+            highlightTextInElement(reference.text, contentContainer!);
+          }, 300);
+        }, 500);
+      }
+    } else {
       // For other file types (PDF, text, etc.), highlight the referenced text
       setIsYoutubeVideo(false);
       

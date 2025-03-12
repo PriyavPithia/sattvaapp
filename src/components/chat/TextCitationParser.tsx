@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
-import { FileText, Youtube, Play, Headphones, Video } from 'lucide-react';
+import { FileText, Youtube, Play, Headphones, Video, Globe, ExternalLink } from 'lucide-react';
 import { formatTime } from '@/lib/youtubeService';
 import type { FileRecord } from '@/lib/supabase';
 import ReactMarkdown from 'react-markdown';
@@ -83,13 +83,19 @@ export const TextCitationParser: React.FC<TextCitationParserProps> = ({
     // Determine the icon and label based on file type
     let icon = <FileText className="h-3 w-3 mr-1" />;
     let label = file.type || 'Text';
+    let buttonClassName = "inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-sattva-100 text-sattva-700 hover:bg-sattva-200 transition-colors mx-1 citation-button";
     
     // Convert the file type to a more readable format
     if (file.type) {
       const type = file.type.toLowerCase();
       console.log(`Processing file type: "${type}" for file: ${file.name}`);
       
-      if (type === 'audio' || type.includes('audio/') || 
+      if (type === 'website') {
+        icon = <Globe className="h-3 w-3 mr-1" />;
+        label = 'Website';
+        // Use the same style as other references
+        buttonClassName = "inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-sattva-100 text-sattva-700 hover:bg-sattva-200 transition-colors mx-1 citation-button";
+      } else if (type === 'audio' || type.includes('audio/') || 
           type === 'mp3' || type.includes('mpeg') || 
           file.name?.toLowerCase().endsWith('.mp3') ||
           file.name?.toLowerCase().endsWith('.wav') ||
@@ -97,14 +103,6 @@ export const TextCitationParser: React.FC<TextCitationParserProps> = ({
           file.name?.toLowerCase().endsWith('.m4a')) {
         icon = <Headphones className="h-3 w-3 mr-1" />;
         label = 'Audio';
-        
-        // For audio, ensure we have a timestamp (default to 0 if not provided)
-        if (reference?.position !== undefined) {
-          const formattedTime = formatTime(reference.position);
-          if (formattedTime) {
-            label = `${label} ${formattedTime}`;
-          }
-        }
       } else if (type === 'video' || type.includes('video/')) {
         icon = <Video className="h-3 w-3 mr-1" />;
         label = 'Video';
@@ -185,12 +183,33 @@ export const TextCitationParser: React.FC<TextCitationParserProps> = ({
       position: reference?.position
     };
     
+    // Enhanced tooltip content
+    const tooltipContent = (
+      <div className="p-2 max-w-md">
+        <p className="font-medium text-sm">{file.name}</p>
+        {file.type?.toLowerCase() === 'website' && file.source_url && (
+          <div className="flex items-center text-xs text-gray-600 mt-1">
+            <ExternalLink className="h-3 w-3 mr-1" />
+            <span className="truncate">{file.source_url}</span>
+          </div>
+        )}
+        {reference?.text && (
+          <p className="text-xs text-gray-600 mt-1 line-clamp-6">
+            "{reference.text}"
+          </p>
+        )}
+        <div className="mt-2 text-xs bg-gray-50 p-1 rounded">
+          Click to view in context
+        </div>
+      </div>
+    );
+    
     return (
       <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
             <button
-              className="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-sattva-100 text-sattva-700 hover:bg-sattva-200 transition-colors mx-1 citation-button"
+              className={buttonClassName}
               onClick={() => onReferenceClick(referenceObj)}
             >
               {icon}
@@ -198,17 +217,7 @@ export const TextCitationParser: React.FC<TextCitationParserProps> = ({
             </button>
           </TooltipTrigger>
           <TooltipContent className="tooltip-content">
-            <div className="p-2 max-w-md">
-              <p className="font-medium text-sm">{file.name}</p>
-              {reference?.text && (
-                <p className="text-xs text-gray-600 mt-1 line-clamp-6">
-                  "{reference.text}"
-                </p>
-              )}
-              <div className="mt-2 text-xs bg-gray-50 p-1 rounded">
-                Click to view in context
-              </div>
-            </div>
+            {tooltipContent}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
